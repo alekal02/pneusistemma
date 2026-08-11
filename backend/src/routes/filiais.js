@@ -304,7 +304,7 @@ router.get('/:id/veiculos/:veiculoId', (req, res) => {
     ORDER BY ${orderSql}
   `).all(veiculo.id);
 
-  const pneusComStatus = pneus.map((p) => {
+  const basePneus = pneus.map((p) => {
     const row = {
       sulco_externo: p.ult_sulco_ext,
       sulco_central: p.ult_sulco_cent,
@@ -313,12 +313,11 @@ router.get('/:id/veiculos/:veiculoId', (req, res) => {
     };
     const menor = menorSulco(row);
     const diag = diagnosticarPerfil(row, limites.diagnostico_tolerancia_mm);
-    const acao = sugerirAcao(menor, limites, p.vida_recap || 0);
     const sulcoRef = p.sulco_inicial_mm ?? limites.sulco_novo_mm;
-    const temAnomalia = acao.codigo !== 'ok' || (diag.codigo !== 'ok' && diag.codigo !== 'sem_dado');
 
     return {
       ...p,
+      _row: row,
       posicao_label: labelPosicao(p.posicao),
       papel_posicao: papelPosicao(p.posicao),
       padrao: p.tipo_pneu,
@@ -328,9 +327,6 @@ router.get('/:id/veiculos/:veiculoId', (req, res) => {
       diagnostico: p.ult_diagnostico || diag.codigo,
       diagnostico_label: diag.label,
       diagnostico_desc: diag.descricao || '',
-      acao_sugerida: acao.codigo,
-      acao_label: acao.label,
-      acao_motivo: acao.motivo,
       vida_util_pct: percentualVida(menor, sulcoRef, limites.sulco_critico_mm),
       vida_label: p.vida_recap > 0
         ? `${p.vida_recap}ª recap`
@@ -345,6 +341,24 @@ router.get('/:id/veiculos/:veiculoId', (req, res) => {
           menor_sulco: menor,
         }
         : null,
+    };
+  });
+
+  const pneusComStatus = basePneus.map((p) => {
+    const candidatos = basePneus.filter((c) => c.id !== p.id);
+    const acao = sugerirAcao(p.menor_sulco, limites, p.vida_recap || 0, {
+      pontos: p._row,
+      candidatos,
+    });
+    const temAnomalia = acao.codigo !== 'ok' || (p.diagnostico !== 'ok' && p.diagnostico !== 'sem_dado');
+    const { _row, ...rest } = p;
+    return {
+      ...rest,
+      acao_sugerida: acao.codigo,
+      acao_label: acao.label,
+      acao_motivo: acao.motivo,
+      desvio_mm: acao.desvio_mm ?? null,
+      rodizio_sugestao: acao.rodizio_sugestao || null,
       anomalia: temAnomalia,
     };
   });

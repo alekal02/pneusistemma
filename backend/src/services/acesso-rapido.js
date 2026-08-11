@@ -81,7 +81,7 @@ export function montarDetalheVeiculo(veiculoId, filialId = null) {
     ORDER BY ${orderSql}
   `).all(veiculoId);
 
-  const pneusComStatus = pneus.map((p) => {
+  const basePneus = pneus.map((p) => {
     const row = {
       sulco_externo: p.ult_sulco_ext,
       sulco_central: p.ult_sulco_cent,
@@ -90,11 +90,11 @@ export function montarDetalheVeiculo(veiculoId, filialId = null) {
     };
     const menor = menorSulco(row);
     const diag = diagnosticarPerfil(row, limites.diagnostico_tolerancia_mm);
-    const acao = sugerirAcao(menor, limites, p.vida_recap || 0);
     const sulcoRef = p.sulco_inicial_mm ?? limites.sulco_novo_mm;
 
     return {
       ...p,
+      _row: row,
       posicao_label: labelPosicao(p.posicao),
       papel_posicao: papelPosicao(p.posicao),
       padrao: p.tipo_pneu,
@@ -103,9 +103,6 @@ export function montarDetalheVeiculo(veiculoId, filialId = null) {
       status_sulco: classificarSulco(menor),
       diagnostico: p.ult_diagnostico || diag.codigo,
       diagnostico_label: diag.label,
-      acao_sugerida: p.ult_acao || acao.codigo,
-      acao_label: acao.label,
-      acao_motivo: acao.motivo,
       vida_util_pct: percentualVida(menor, sulcoRef, limites.sulco_critico_mm),
       vida_label: p.vida_recap > 0
         ? `${p.vida_recap}ª recap`
@@ -120,6 +117,23 @@ export function montarDetalheVeiculo(veiculoId, filialId = null) {
           menor_sulco: menor,
         }
         : null,
+    };
+  });
+
+  const pneusComStatus = basePneus.map((p) => {
+    const candidatos = basePneus.filter((c) => c.id !== p.id);
+    const acao = sugerirAcao(p.menor_sulco, limites, p.vida_recap || 0, {
+      pontos: p._row,
+      candidatos,
+    });
+    const { _row, ...rest } = p;
+    return {
+      ...rest,
+      acao_sugerida: acao.codigo,
+      acao_label: acao.label,
+      acao_motivo: acao.motivo,
+      desvio_mm: acao.desvio_mm ?? null,
+      rodizio_sugestao: acao.rodizio_sugestao || null,
     };
   });
 

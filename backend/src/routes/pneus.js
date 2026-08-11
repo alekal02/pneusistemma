@@ -38,12 +38,15 @@ const router = Router();
 router.use(requireAuth);
 router.use(requireFilial);
 
-function enriquecerPneu(pneu, ultimaMedicao = null) {
+function enriquecerPneu(pneu, ultimaMedicao = null, candidatos = []) {
   const limites = getLimites();
   const row = ultimaMedicao || {};
   const menor = menorSulco(row);
   const diagnostico = diagnosticarPerfil(row, limites.diagnostico_tolerancia_mm);
-  const acao = sugerirAcao(menor, limites, pneu.vida_recap || 0);
+  const acao = sugerirAcao(menor, limites, pneu.vida_recap || 0, {
+    pontos: ultimaMedicao ? row : null,
+    candidatos: candidatos.filter((c) => Number(c.id) !== Number(pneu.id)),
+  });
   const sulcoRef = pneu.sulco_inicial_mm ?? limites.sulco_novo_mm;
 
   return {
@@ -61,6 +64,8 @@ function enriquecerPneu(pneu, ultimaMedicao = null) {
     acao_sugerida: acao.codigo,
     acao_label: acao.label,
     acao_motivo: acao.motivo,
+    desvio_mm: acao.desvio_mm ?? null,
+    rodizio_sugestao: acao.rodizio_sugestao || null,
     vida_util_pct: percentualVida(menor, sulcoRef, limites.sulco_critico_mm),
     vida_label: pneu.vida_recap > 0
       ? `${pneu.vida_recap}ª recap`
@@ -349,9 +354,21 @@ router.get('/:id', (req, res) => {
   `).all(req.params.id);
 
   const ultima = medicoes[0] || null;
+  let candidatos = [];
+  if (pneu.veiculo_id) {
+    candidatos = db.prepare(`
+      SELECT p.id, p.posicao, p.numero_fogo,
+        (SELECT sulco_externo FROM medicoes WHERE pneu_id = p.id ORDER BY data_medicao DESC, id DESC LIMIT 1) as ult_sulco_ext,
+        (SELECT sulco_central FROM medicoes WHERE pneu_id = p.id ORDER BY data_medicao DESC, id DESC LIMIT 1) as ult_sulco_cent,
+        (SELECT sulco_interno FROM medicoes WHERE pneu_id = p.id ORDER BY data_medicao DESC, id DESC LIMIT 1) as ult_sulco_int,
+        (SELECT sulco_auxiliar FROM medicoes WHERE pneu_id = p.id ORDER BY data_medicao DESC, id DESC LIMIT 1) as ult_sulco_aux
+      FROM pneus p
+      WHERE p.veiculo_id = ? AND p.ativo = 1 AND p.status_pneu = 'montado' AND p.id != ?
+    `).all(pneu.veiculo_id, pneu.id);
+  }
   const padraoLabel = labelTipoPneu(pneu.tipo_pneu);
   res.json({
-    ...enriquecerPneu(pneu, ultima),
+    ...enriquecerPneu(pneu, ultima, candidatos),
     medicoes: medicoesComStatus,
     movimentacoes: movimentacoes.map((m) => ({
       ...m,

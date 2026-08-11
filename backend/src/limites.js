@@ -8,21 +8,62 @@ const CHAVES = {
   NOVO: 'sulco_novo_mm',
   MAX_RECAPS: 'max_recaps',
   TOLERANCIA: 'diagnostico_tolerancia_mm',
+  RODIZIO_DESVIO: 'rodizio_desvio_mm',
+  RODIZIO_SIMILARIDADE: 'rodizio_similaridade_mm',
+  ACAO_TROCA_LABEL: 'acao_troca_label',
+  ACAO_TROCA_INSTRUCAO: 'acao_troca_instrucao',
+  ACAO_RECAP_LABEL: 'acao_recap_label',
+  ACAO_RECAP_INSTRUCAO: 'acao_recap_instrucao',
+  ACAO_MONITORAR_LABEL: 'acao_monitorar_label',
+  ACAO_MONITORAR_INSTRUCAO: 'acao_monitorar_instrucao',
+  ACAO_RODIZIO_LABEL: 'acao_rodizio_label',
+  ACAO_RODIZIO_INSTRUCAO: 'acao_rodizio_instrucao',
+  ACAO_OK_LABEL: 'acao_ok_label',
+  ACAO_OK_INSTRUCAO: 'acao_ok_instrucao',
 };
 
 const PADROES = {
-  [CHAVES.CRITICO]: config.sulcoMinimo, // perda/troca: ≤ 3 mm
-  [CHAVES.RECAP]: 5.0,                  // recap: > crítico e ≤ 5 mm
-  [CHAVES.ALERTA]: config.sulcoAlerta,  // monitorar: > recap e ≤ 8 mm
+  [CHAVES.CRITICO]: config.sulcoMinimo,
+  [CHAVES.RECAP]: 5.0,
+  [CHAVES.ALERTA]: config.sulcoAlerta,
   [CHAVES.NOVO]: 14.0,
   [CHAVES.MAX_RECAPS]: 6,
   [CHAVES.TOLERANCIA]: 1.0,
+  [CHAVES.RODIZIO_DESVIO]: 3.0,
+  [CHAVES.RODIZIO_SIMILARIDADE]: 2.5,
+  [CHAVES.ACAO_TROCA_LABEL]: 'Troca',
+  [CHAVES.ACAO_TROCA_INSTRUCAO]: 'Retirar o pneu — perda/troca obrigatória',
+  [CHAVES.ACAO_RECAP_LABEL]: 'Recapagem',
+  [CHAVES.ACAO_RECAP_INSTRUCAO]: 'Enviar para recapagem (se ainda houver vida de recap)',
+  [CHAVES.ACAO_MONITORAR_LABEL]: 'Monitorar',
+  [CHAVES.ACAO_MONITORAR_INSTRUCAO]: 'Acompanhar de perto na próxima medição',
+  [CHAVES.ACAO_RODIZIO_LABEL]: 'Rodízio',
+  [CHAVES.ACAO_RODIZIO_INSTRUCAO]: 'Faça rodízio com outro pneu de sulco parecido para o desgaste ficar linear e evitar recap desnecessária',
+  [CHAVES.ACAO_OK_LABEL]: 'OK',
+  [CHAVES.ACAO_OK_INSTRUCAO]: 'Manter em operação — sulco adequado',
 };
+
+const CHAVES_TEXTO = new Set([
+  CHAVES.ACAO_TROCA_LABEL,
+  CHAVES.ACAO_TROCA_INSTRUCAO,
+  CHAVES.ACAO_RECAP_LABEL,
+  CHAVES.ACAO_RECAP_INSTRUCAO,
+  CHAVES.ACAO_MONITORAR_LABEL,
+  CHAVES.ACAO_MONITORAR_INSTRUCAO,
+  CHAVES.ACAO_RODIZIO_LABEL,
+  CHAVES.ACAO_RODIZIO_INSTRUCAO,
+  CHAVES.ACAO_OK_LABEL,
+  CHAVES.ACAO_OK_INSTRUCAO,
+]);
 
 function lerValor(chave) {
   const db = getDb();
   const row = db.prepare('SELECT valor FROM configuracoes WHERE chave = ?').get(chave);
   if (!row) return PADROES[chave];
+  if (CHAVES_TEXTO.has(chave)) {
+    const txt = String(row.valor ?? '').trim();
+    return txt || PADROES[chave];
+  }
   const n = parseFloat(row.valor);
   return Number.isFinite(n) ? n : PADROES[chave];
 }
@@ -38,6 +79,13 @@ function salvarValor(chave, valor) {
   `).run(chave, String(valor));
 }
 
+function textoOuPadrao(valor, padrao, { max = 200 } = {}) {
+  if (valor == null) return padrao;
+  const t = String(valor).trim();
+  if (!t) return padrao;
+  return t.slice(0, max);
+}
+
 export function getLimites() {
   return {
     sulco_critico_mm: lerValor(CHAVES.CRITICO),
@@ -46,6 +94,30 @@ export function getLimites() {
     sulco_novo_mm: lerValor(CHAVES.NOVO),
     max_recaps: Math.round(lerValor(CHAVES.MAX_RECAPS)),
     diagnostico_tolerancia_mm: lerValor(CHAVES.TOLERANCIA),
+    rodizio_desvio_mm: lerValor(CHAVES.RODIZIO_DESVIO),
+    rodizio_similaridade_mm: lerValor(CHAVES.RODIZIO_SIMILARIDADE),
+    acoes: {
+      troca: {
+        label: lerValor(CHAVES.ACAO_TROCA_LABEL),
+        instrucao: lerValor(CHAVES.ACAO_TROCA_INSTRUCAO),
+      },
+      recap: {
+        label: lerValor(CHAVES.ACAO_RECAP_LABEL),
+        instrucao: lerValor(CHAVES.ACAO_RECAP_INSTRUCAO),
+      },
+      monitorar: {
+        label: lerValor(CHAVES.ACAO_MONITORAR_LABEL),
+        instrucao: lerValor(CHAVES.ACAO_MONITORAR_INSTRUCAO),
+      },
+      rodizio: {
+        label: lerValor(CHAVES.ACAO_RODIZIO_LABEL),
+        instrucao: lerValor(CHAVES.ACAO_RODIZIO_INSTRUCAO),
+      },
+      ok: {
+        label: lerValor(CHAVES.ACAO_OK_LABEL),
+        instrucao: lerValor(CHAVES.ACAO_OK_INSTRUCAO),
+      },
+    },
   };
 }
 
@@ -59,16 +131,22 @@ export function setLimites(body) {
   const tolerancia = body.diagnostico_tolerancia_mm != null
     ? parseFloat(body.diagnostico_tolerancia_mm)
     : atual.diagnostico_tolerancia_mm;
+  const rodizioDesvio = body.rodizio_desvio_mm != null
+    ? parseFloat(body.rodizio_desvio_mm)
+    : atual.rodizio_desvio_mm;
+  const rodizioSimilaridade = body.rodizio_similaridade_mm != null
+    ? parseFloat(body.rodizio_similaridade_mm)
+    : atual.rodizio_similaridade_mm;
 
   if (!Number.isFinite(critico) || critico < 0) throw new Error('Limite de perda/troca inválido');
   if (!Number.isFinite(recap) || recap <= critico) {
-    throw new Error('O limiar de recapagem deve ser maior que o de perda (<3 → troca)');
+    throw new Error('O limiar de recapagem deve ser maior que o de perda');
   }
   if (!Number.isFinite(alerta) || alerta <= recap) {
     throw new Error('O limiar de monitorar deve ser maior que o de recapagem');
   }
   if (!Number.isFinite(novo) || novo <= alerta) {
-    throw new Error('O sulco de pneu novo deve ser maior que o limiar de OK/monitorar');
+    throw new Error('O sulco de pneu novo deve ser maior que o limiar de monitorar');
   }
   if (!Number.isFinite(maxRecaps) || maxRecaps < 0 || maxRecaps > 10) {
     throw new Error('Máximo de recaps inválido (0–10)');
@@ -76,6 +154,24 @@ export function setLimites(body) {
   if (!Number.isFinite(tolerancia) || tolerancia < 0) {
     throw new Error('Tolerância de diagnóstico inválida');
   }
+  if (!Number.isFinite(rodizioDesvio) || rodizioDesvio < 0.5 || rodizioDesvio > 20) {
+    throw new Error('Desvio para rodízio inválido (0,5 a 20 mm)');
+  }
+  if (!Number.isFinite(rodizioSimilaridade) || rodizioSimilaridade < 0.5 || rodizioSimilaridade > 20) {
+    throw new Error('Similaridade de rodízio inválida (0,5 a 20 mm)');
+  }
+
+  const acoesBody = body.acoes && typeof body.acoes === 'object' ? body.acoes : {};
+  const trocaLabel = textoOuPadrao(acoesBody.troca?.label ?? body.acao_troca_label, atual.acoes.troca.label, { max: 40 });
+  const trocaInstrucao = textoOuPadrao(acoesBody.troca?.instrucao ?? body.acao_troca_instrucao, atual.acoes.troca.instrucao, { max: 240 });
+  const recapLabel = textoOuPadrao(acoesBody.recap?.label ?? body.acao_recap_label, atual.acoes.recap.label, { max: 40 });
+  const recapInstrucao = textoOuPadrao(acoesBody.recap?.instrucao ?? body.acao_recap_instrucao, atual.acoes.recap.instrucao, { max: 240 });
+  const monLabel = textoOuPadrao(acoesBody.monitorar?.label ?? body.acao_monitorar_label, atual.acoes.monitorar.label, { max: 40 });
+  const monInstrucao = textoOuPadrao(acoesBody.monitorar?.instrucao ?? body.acao_monitorar_instrucao, atual.acoes.monitorar.instrucao, { max: 240 });
+  const rodLabel = textoOuPadrao(acoesBody.rodizio?.label ?? body.acao_rodizio_label, atual.acoes.rodizio.label, { max: 40 });
+  const rodInstrucao = textoOuPadrao(acoesBody.rodizio?.instrucao ?? body.acao_rodizio_instrucao, atual.acoes.rodizio.instrucao, { max: 240 });
+  const okLabel = textoOuPadrao(acoesBody.ok?.label ?? body.acao_ok_label, atual.acoes.ok.label, { max: 40 });
+  const okInstrucao = textoOuPadrao(acoesBody.ok?.instrucao ?? body.acao_ok_instrucao, atual.acoes.ok.instrucao, { max: 240 });
 
   salvarValor(CHAVES.CRITICO, critico);
   salvarValor(CHAVES.ALERTA, alerta);
@@ -83,6 +179,18 @@ export function setLimites(body) {
   salvarValor(CHAVES.NOVO, novo);
   salvarValor(CHAVES.MAX_RECAPS, maxRecaps);
   salvarValor(CHAVES.TOLERANCIA, tolerancia);
+  salvarValor(CHAVES.RODIZIO_DESVIO, rodizioDesvio);
+  salvarValor(CHAVES.RODIZIO_SIMILARIDADE, rodizioSimilaridade);
+  salvarValor(CHAVES.ACAO_TROCA_LABEL, trocaLabel);
+  salvarValor(CHAVES.ACAO_TROCA_INSTRUCAO, trocaInstrucao);
+  salvarValor(CHAVES.ACAO_RECAP_LABEL, recapLabel);
+  salvarValor(CHAVES.ACAO_RECAP_INSTRUCAO, recapInstrucao);
+  salvarValor(CHAVES.ACAO_MONITORAR_LABEL, monLabel);
+  salvarValor(CHAVES.ACAO_MONITORAR_INSTRUCAO, monInstrucao);
+  salvarValor(CHAVES.ACAO_RODIZIO_LABEL, rodLabel);
+  salvarValor(CHAVES.ACAO_RODIZIO_INSTRUCAO, rodInstrucao);
+  salvarValor(CHAVES.ACAO_OK_LABEL, okLabel);
+  salvarValor(CHAVES.ACAO_OK_INSTRUCAO, okInstrucao);
 
   return getLimites();
 }

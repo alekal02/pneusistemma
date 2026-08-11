@@ -535,7 +535,91 @@ h3 {
   .config-layout { grid-template-columns: 1fr; }
 }
 
-.config-form { max-width: 420px; }
+.config-form { max-width: none; }
+.config-faixas { display: flex; flex-direction: column; gap: .85rem; }
+.config-subtitle {
+  margin: 0 0 .25rem;
+  font-size: 1rem;
+  color: #0f172a;
+}
+.faixa-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: .75rem .85rem;
+  background: #fff;
+  border-left: 4px solid #94a3b8;
+}
+.faixa-card.faixa-critico { border-left-color: #dc2626; }
+.faixa-card.faixa-recap { border-left-color: #ea580c; }
+.faixa-card.faixa-alerta { border-left-color: #d97706; }
+.faixa-card.faixa-rodizio { border-left-color: #0284c7; }
+.faixa-card.faixa-ok { border-left-color: #16a34a; }
+.faixa-card header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: .75rem;
+  margin-bottom: .5rem;
+}
+.faixa-badge {
+  font-size: .8rem;
+  font-weight: 700;
+  letter-spacing: .02em;
+  color: #334155;
+}
+.faixa-limite {
+  margin: 0;
+  min-width: 140px;
+}
+.faixa-limite input { max-width: 110px; }
+.faixa-range { margin: 0 0 .5rem; }
+.faixa-ok-hint {
+  font-size: .85rem;
+  color: #64748b;
+  font-weight: 600;
+}
+.acao-instrucao {
+  margin: .5rem 0 .75rem;
+  padding: .65rem .75rem;
+  border-radius: 8px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #145223;
+  font-size: .9rem;
+  font-weight: 600;
+}
+.acao-instrucao.alerta {
+  background: #fffbeb;
+  border-color: #fcd34d;
+  color: #92400e;
+}
+.acao-instrucao.critico {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #991b1b;
+}
+.acao-instrucao.recap {
+  background: #fff7ed;
+  border-color: #fdba74;
+  color: #9a3412;
+}
+.acao-instrucao.rodizio {
+  background: #f0f9ff;
+  border-color: #7dd3fc;
+  color: #075985;
+}
+.rodizio-sugestao {
+  margin: 0 0 .75rem;
+  padding: .65rem .75rem;
+  border-radius: 8px;
+  background: #eff6ff;
+  border: 1px dashed #3b82f6;
+  color: #1e3a8a;
+  font-size: .88rem;
+  line-height: 1.4;
+}
+.rodizio-sugestao strong { display: block; margin-bottom: .25rem; }
 
 .field-hint {
   display: block;
@@ -956,6 +1040,7 @@ h3 {
 .badge-acao-troca { background: #fee2e2; color: #991b1b; }
 .badge-acao-recap { background: #e0e7ff; color: #3730a3; }
 .badge-acao-monitorar { background: #fef3c7; color: #92400e; }
+.badge-acao-rodizio { background: #e0f2fe; color: #075985; }
 
 .truck-badges { display: flex; flex-wrap: wrap; gap: .4rem; margin: .5rem 0 1rem; }
 .panel-subtitle { font-size: .95rem; margin: 1rem 0 .5rem; color: #334155; }

@@ -9,17 +9,19 @@ router.use(requireAuth);
 
 router.get('/', (_req, res) => {
   const limites = getLimites();
+  const a = limites.acoes;
   res.json({
     ...limites,
     descricao: {
-      perda: `Sulco < ${limites.sulco_critico_mm} mm — perda/troca`,
-      recap: `De ${limites.sulco_critico_mm} a ${limites.sulco_recap_mm} mm — recapagem (máx. ${limites.max_recaps}ª)`,
-      monitorar: `De ${limites.sulco_recap_mm} a ${limites.sulco_alerta_mm} mm — monitorar`,
-      ok: `Acima de ${limites.sulco_alerta_mm} mm — OK`,
+      perda: `Sulco < ${limites.sulco_critico_mm} mm — ${a.troca.label}: ${a.troca.instrucao}`,
+      recap: `De ${limites.sulco_critico_mm} a ${limites.sulco_recap_mm} mm — ${a.recap.label}: ${a.recap.instrucao}`,
+      monitorar: `De ${limites.sulco_recap_mm} a ${limites.sulco_alerta_mm} mm — ${a.monitorar.label}: ${a.monitorar.instrucao}`,
+      rodizio: `Desvio entre pontos ≥ ${limites.rodizio_desvio_mm} mm — ${a.rodizio.label}: ${a.rodizio.instrucao}`,
+      ok: `Acima de ${limites.sulco_alerta_mm} mm — ${a.ok.label}: ${a.ok.instrucao}`,
       novo: `Sulco típico de pneu novo: ~${limites.sulco_novo_mm} mm`,
     },
     diagnosticos: Object.values(DIAGNOSTICOS),
-    acoes: Object.values(ACOES),
+    acoes_catalogo: Object.values(ACOES),
   });
 });
 

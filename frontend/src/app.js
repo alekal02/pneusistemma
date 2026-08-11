@@ -33,6 +33,15 @@ let limitesAtuais = {
   sulco_novo_mm: 14.0,
   max_recaps: 6,
   diagnostico_tolerancia_mm: 1.0,
+  acoes: {
+    troca: { label: 'Troca', instrucao: 'Retirar o pneu — perda/troca obrigatória' },
+    recap: { label: 'Recapagem', instrucao: 'Enviar para recapagem (se ainda houver vida de recap)' },
+    monitorar: { label: 'Monitorar', instrucao: 'Acompanhar de perto na próxima medição' },
+    rodizio: { label: 'Rodízio', instrucao: 'Faça rodízio com outro pneu de sulco parecido para o desgaste ficar linear' },
+    ok: { label: 'OK', instrucao: 'Manter em operação — sulco adequado' },
+  },
+  rodizio_desvio_mm: 3,
+  rodizio_similaridade_mm: 2.5,
 };
 
 const LIMITES_PADRAO = { ...limitesAtuais };
@@ -168,11 +177,87 @@ function atualizarPreviewLimites() {
   if (elRecap) elRecap.textContent = `${critico} – ${recap} mm`;
   if (elAlerta) elAlerta.textContent = `${recap} – ${monitorar} mm`;
   if (elOk) elOk.textContent = `> ${monitorar} mm`;
+
+  const hintRecap = document.getElementById('hint-faixa-recap');
+  const hintMon = document.getElementById('hint-faixa-monitorar');
+  const hintOk = document.getElementById('hint-faixa-ok');
+  if (hintRecap) hintRecap.textContent = `De ${critico} mm até ${recap} mm`;
+  if (hintMon) hintMon.textContent = `De ${recap} mm até ${monitorar} mm`;
+  if (hintOk) hintOk.textContent = `Acima de ${monitorar} mm`;
+
+  const trocaL = document.getElementById('cfg-acao-troca-label')?.value?.trim() || 'Troca';
+  const recapL = document.getElementById('cfg-acao-recap-label')?.value?.trim() || 'Recapagem';
+  const monL = document.getElementById('cfg-acao-monitorar-label')?.value?.trim() || 'Monitorar';
+  const okL = document.getElementById('cfg-acao-ok-label')?.value?.trim() || 'OK';
+  const trocaI = document.getElementById('cfg-acao-troca-instrucao')?.value?.trim() || '—';
+  const recapI = document.getElementById('cfg-acao-recap-instrucao')?.value?.trim() || '—';
+  const monI = document.getElementById('cfg-acao-monitorar-instrucao')?.value?.trim() || '—';
+  const okI = document.getElementById('cfg-acao-ok-instrucao')?.value?.trim() || '—';
+
+  const setTxt = (id, txt) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = txt;
+  };
+  setTxt('preview-label-troca', trocaL);
+  setTxt('preview-label-recap', recapL);
+  setTxt('preview-label-monitorar', monL);
+  setTxt('preview-label-ok', okL);
+  setTxt('leg-troca-label', `${trocaL}:`);
+  setTxt('leg-recap-label', `${recapL}:`);
+  setTxt('leg-monitorar-label', `${monL}:`);
+  setTxt('leg-ok-label', `${okL}:`);
+  setTxt('leg-troca-instrucao', trocaI);
+  setTxt('leg-recap-instrucao', recapI);
+  setTxt('leg-monitorar-instrucao', monI);
+  setTxt('leg-ok-instrucao', okI);
 }
 
 function hintLimites() {
-  const { sulco_critico_mm: c, sulco_alerta_mm: a, sulco_recap_mm: r } = limitesAtuais;
-  return `Perda < ${c} mm · Recap ${c}–${r} mm · Monitorar ${r}–${a} mm · OK > ${a} mm`;
+  const { sulco_critico_mm: c, sulco_alerta_mm: a, sulco_recap_mm: r, acoes } = limitesAtuais;
+  const t = acoes?.troca?.label || 'Troca';
+  const rc = acoes?.recap?.label || 'Recap';
+  const m = acoes?.monitorar?.label || 'Monitorar';
+  const o = acoes?.ok?.label || 'OK';
+  return `< ${c} mm → ${t} · ${c}–${r} mm → ${rc} · ${r}–${a} mm → ${m} · > ${a} mm → ${o}`;
+}
+
+function mostrarAcaoInstrucao(pneuOuResult) {
+  const el = document.getElementById('truck-acao-instrucao');
+  if (!el) return;
+  const texto = pneuOuResult?.acao_motivo
+    || pneuOuResult?.acao_instrucao
+    || limitesAtuais.acoes?.[pneuOuResult?.acao_sugerida]?.instrucao
+    || '';
+  const codigo = pneuOuResult?.acao_sugerida || 'ok';
+  if (!texto) {
+    el.classList.add('hidden');
+    el.textContent = '';
+    return;
+  }
+  el.textContent = texto;
+  el.className = 'acao-instrucao';
+  if (codigo === 'troca') el.classList.add('critico');
+  else if (codigo === 'recap') el.classList.add('recap');
+  else if (codigo === 'monitorar') el.classList.add('alerta');
+  else if (codigo === 'rodizio') el.classList.add('rodizio');
+  el.classList.remove('hidden');
+}
+
+function mostrarRodizioSugestao(pneuOuResult) {
+  const el = document.getElementById('truck-rodizio-sugestao');
+  if (!el) return;
+  const sug = pneuOuResult?.rodizio_sugestao;
+  if (!sug || pneuOuResult?.acao_sugerida !== 'rodizio') {
+    el.classList.add('hidden');
+    el.innerHTML = '';
+    return;
+  }
+  el.innerHTML = `
+    <strong>Par sugerido para rodízio</strong>
+    ${sug.label || 'Outro pneu'}
+    ${sug.motivo ? `<br><span class="hint">${sug.motivo}</span>` : ''}
+  `;
+  el.classList.remove('hidden');
 }
 
 function showView(name) {
@@ -600,8 +685,10 @@ function selecionarPneuTruck(pneu) {
   document.getElementById('truck-save-status').textContent = 'Preencha os sulcos — salva automaticamente';
   document.getElementById('truck-save-status').className = 'hint save-status';
   document.getElementById('truck-diagnostico').textContent = pneu.diagnostico_label
-    ? `Diagnóstico: ${pneu.diagnostico_label}${pneu.acao_motivo ? ` · ${pneu.acao_motivo}` : ''}`
+    ? `Diagnóstico: ${pneu.diagnostico_label}`
     : '';
+  mostrarAcaoInstrucao(pneu);
+  mostrarRodizioSugestao(pneu);
 
   const pontos = {
     externo: pneu.ult_sulco_ext,
@@ -870,6 +957,8 @@ async function salvarMedicaoTruck() {
       acao_sugerida: result.acao_sugerida,
       acao_label: result.acao_label,
       acao_motivo: result.acao_motivo,
+      desvio_mm: result.desvio_mm,
+      rodizio_sugestao: result.rodizio_sugestao || null,
       ultima_medicao: {
         data: new Date().toISOString().split('T')[0],
         sulco_externo: pontos.externo,
@@ -887,7 +976,16 @@ async function salvarMedicaoTruck() {
     document.getElementById('truck-pneu-status').innerHTML = badge(result.status_sulco);
     document.getElementById('truck-pneu-acao').innerHTML = badgeAcao(result.acao_sugerida, result.acao_label);
     document.getElementById('truck-diagnostico').textContent =
-      `${result.diagnostico_label} · ${result.acao_motivo}`;
+      result.diagnostico_label ? `Diagnóstico: ${result.diagnostico_label}` : '';
+    mostrarAcaoInstrucao({
+      acao_sugerida: result.acao_sugerida,
+      acao_motivo: result.acao_motivo,
+      rodizio_sugestao: result.rodizio_sugestao,
+    });
+    mostrarRodizioSugestao({
+      acao_sugerida: result.acao_sugerida,
+      rodizio_sugestao: result.rodizio_sugestao,
+    });
     atualizarResumoPneuTruck(pneuSelecionado);
     atualizarPerfilLocal('truck-perfil', pontos, {
       label: result.diagnostico_label,
@@ -1824,13 +1922,35 @@ async function loadConfiguracoes() {
     document.getElementById('cfg-novo').value = config.sulco_novo_mm ?? 14;
     document.getElementById('cfg-max-recaps').value = config.max_recaps ?? 6;
     document.getElementById('cfg-tolerancia').value = config.diagnostico_tolerancia_mm ?? 1;
+    document.getElementById('cfg-rodizio-desvio').value = config.rodizio_desvio_mm ?? 3;
+    document.getElementById('cfg-rodizio-similaridade').value = config.rodizio_similaridade_mm ?? 2.5;
+
+    const a = config.acoes || {};
+    document.getElementById('cfg-acao-troca-label').value = a.troca?.label || 'Troca';
+    document.getElementById('cfg-acao-troca-instrucao').value = a.troca?.instrucao || '';
+    document.getElementById('cfg-acao-recap-label').value = a.recap?.label || 'Recapagem';
+    document.getElementById('cfg-acao-recap-instrucao').value = a.recap?.instrucao || '';
+    document.getElementById('cfg-acao-monitorar-label').value = a.monitorar?.label || 'Monitorar';
+    document.getElementById('cfg-acao-monitorar-instrucao').value = a.monitorar?.instrucao || '';
+    document.getElementById('cfg-acao-rodizio-label').value = a.rodizio?.label || 'Rodízio';
+    document.getElementById('cfg-acao-rodizio-instrucao').value = a.rodizio?.instrucao || '';
+    document.getElementById('cfg-acao-ok-label').value = a.ok?.label || 'OK';
+    document.getElementById('cfg-acao-ok-instrucao').value = a.ok?.instrucao || '';
+
     atualizarPreviewLimites();
   } catch (err) {
     toast(err.message, 'error');
   }
 }
 
-['cfg-critico', 'cfg-alerta', 'cfg-recap'].forEach((id) => {
+['cfg-critico', 'cfg-alerta', 'cfg-recap',
+  'cfg-acao-troca-label', 'cfg-acao-troca-instrucao',
+  'cfg-acao-recap-label', 'cfg-acao-recap-instrucao',
+  'cfg-acao-monitorar-label', 'cfg-acao-monitorar-instrucao',
+  'cfg-acao-rodizio-label', 'cfg-acao-rodizio-instrucao',
+  'cfg-acao-ok-label', 'cfg-acao-ok-instrucao',
+  'cfg-rodizio-desvio', 'cfg-rodizio-similaridade',
+].forEach((id) => {
   document.getElementById(id)?.addEventListener('input', atualizarPreviewLimites);
 });
 
@@ -1842,6 +1962,30 @@ document.getElementById('btn-salvar-config')?.addEventListener('click', async ()
     sulco_novo_mm: parseFloat(document.getElementById('cfg-novo').value),
     max_recaps: parseInt(document.getElementById('cfg-max-recaps').value, 10),
     diagnostico_tolerancia_mm: parseFloat(document.getElementById('cfg-tolerancia').value),
+    rodizio_desvio_mm: parseFloat(document.getElementById('cfg-rodizio-desvio').value),
+    rodizio_similaridade_mm: parseFloat(document.getElementById('cfg-rodizio-similaridade').value),
+    acoes: {
+      troca: {
+        label: document.getElementById('cfg-acao-troca-label').value,
+        instrucao: document.getElementById('cfg-acao-troca-instrucao').value,
+      },
+      recap: {
+        label: document.getElementById('cfg-acao-recap-label').value,
+        instrucao: document.getElementById('cfg-acao-recap-instrucao').value,
+      },
+      monitorar: {
+        label: document.getElementById('cfg-acao-monitorar-label').value,
+        instrucao: document.getElementById('cfg-acao-monitorar-instrucao').value,
+      },
+      rodizio: {
+        label: document.getElementById('cfg-acao-rodizio-label').value,
+        instrucao: document.getElementById('cfg-acao-rodizio-instrucao').value,
+      },
+      ok: {
+        label: document.getElementById('cfg-acao-ok-label').value,
+        instrucao: document.getElementById('cfg-acao-ok-instrucao').value,
+      },
+    },
   };
 
   if (!Number.isFinite(payload.sulco_critico_mm) || !Number.isFinite(payload.sulco_alerta_mm)) {
@@ -1856,7 +2000,7 @@ document.getElementById('btn-salvar-config')?.addEventListener('click', async ()
     limitesAtuais = { ...limitesAtuais, ...result };
     syncMarkersLimites();
     atualizarPreviewLimites();
-    toast('Limites salvos! Dashboard e ações serão recalculados.', 'success');
+    toast('Limites e ações salvos! Medições usam as novas regras.', 'success');
   } catch (err) {
     toast(err.message, 'error');
   }

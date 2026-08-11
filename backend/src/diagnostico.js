@@ -1,6 +1,6 @@
 /**
  * Diagnóstico automático do perfil de desgaste (4 pontos Esq → Dir)
- * e sugestão de ação (OK / RECAP / TROCA).
+ * e sugestão de ação (OK / RODÍZIO / RECAP / TROCA).
  */
 
 export const DIAGNOSTICOS = {
@@ -39,8 +39,9 @@ export const DIAGNOSTICOS = {
 export const ACOES = {
   ok: { codigo: 'ok', label: 'OK', prioridade: 0 },
   monitorar: { codigo: 'monitorar', label: 'Monitorar', prioridade: 1 },
-  recap: { codigo: 'recap', label: 'Recapagem', prioridade: 2 },
-  troca: { codigo: 'troca', label: 'Troca', prioridade: 3 },
+  rodizio: { codigo: 'rodizio', label: 'Rodízio', prioridade: 2 },
+  recap: { codigo: 'recap', label: 'Recapagem', prioridade: 3 },
+  troca: { codigo: 'troca', label: 'Troca', prioridade: 4 },
 };
 
 /**
@@ -65,6 +66,99 @@ export function menorSulco4(row) {
   return vals.length ? Math.min(...vals) : null;
 }
 
+/** Diferença entre o maior e o menor ponto (mm). */
+export function desvioEntrePontos(row) {
+  const vals = valoresValidos(row);
+  if (vals.length < 2) return null;
+  return Math.round((Math.max(...vals) - Math.min(...vals)) * 10) / 10;
+}
+
+/** Média dos pontos medidos. */
+export function mediaSulco(row) {
+  const vals = valoresValidos(row);
+  if (!vals.length) return null;
+  return Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 10) / 10;
+}
+
+/**
+ * Encontra outro pneu montado com sulco parecido (média próxima)
+ * e, de preferência, perfil complementar (espelhado) para equalizar o desgaste.
+ */
+export function encontrarParRodizio(pontosAtual, candidatos = [], limites = {}) {
+  const seq = pontosSulco(pontosAtual).map((v) => (v != null && Number.isFinite(v) ? v : null));
+  const valsAtual = seq.filter((v) => v != null);
+  if (valsAtual.length < 2 || !candidatos.length) return null;
+
+  const mediaAtual = mediaSulco(pontosAtual);
+  const similaridade = limites.rodizio_similaridade_mm ?? 2.5;
+
+  const comMedicao = candidatos
+    .map((c) => {
+      const pontos = {
+        sulco_externo: c.sulco_externo ?? c.ult_sulco_ext ?? null,
+        sulco_central: c.sulco_central ?? c.ult_sulco_cent ?? null,
+        sulco_interno: c.sulco_interno ?? c.ult_sulco_int ?? null,
+        sulco_auxiliar: c.sulco_auxiliar ?? c.ult_sulco_aux ?? null,
+      };
+      const media = mediaSulco(pontos);
+      const menor = menorSulco4(pontos);
+      const desvio = desvioEntrePontos(pontos);
+      if (media == null) return null;
+      return { ...c, _pontos: pontos, _media: media, _menor: menor, _desvio: desvio };
+    })
+    .filter(Boolean);
+
+  if (!comMedicao.length) return null;
+
+  const parecidos = comMedicao
+    .filter((c) => Math.abs(c._media - mediaAtual) <= similaridade)
+    .sort((a, b) => Math.abs(a._media - mediaAtual) - Math.abs(b._media - mediaAtual));
+
+  const lista = parecidos.length
+    ? parecidos
+    : [...comMedicao]
+      .sort((a, b) => Math.abs(a._media - mediaAtual) - Math.abs(b._media - mediaAtual))
+      .slice(0, 3);
+
+  let melhor = null;
+  let melhorScore = Infinity;
+
+  for (const c of lista) {
+    const seqC = pontosSulco(c._pontos).map((v) => (v != null && Number.isFinite(v) ? v : null));
+    const espelhado = [...seqC].reverse();
+    let scoreEsp = 0;
+    let n = 0;
+    for (let i = 0; i < Math.min(seq.length, espelhado.length); i += 1) {
+      if (seq[i] == null || espelhado[i] == null) continue;
+      scoreEsp += Math.abs(seq[i] - espelhado[i]);
+      n += 1;
+    }
+    const scoreComplementar = n ? scoreEsp / n : 99;
+    const scoreMedia = Math.abs(c._media - mediaAtual);
+    const score = scoreComplementar * 0.7 + scoreMedia * 0.3;
+    if (score < melhorScore) {
+      melhorScore = score;
+      melhor = c;
+    }
+  }
+
+  if (!melhor) return null;
+
+  const posLabel = melhor.posicao_label || melhor.posicao || `#${melhor.id}`;
+  const fogo = melhor.numero_fogo ? `Fogo ${melhor.numero_fogo}` : `Pneu #${melhor.id}`;
+  return {
+    pneu_id: melhor.id,
+    posicao: melhor.posicao || null,
+    posicao_label: posLabel,
+    numero_fogo: melhor.numero_fogo || null,
+    media_sulco: melhor._media,
+    menor_sulco: melhor._menor,
+    desvio_mm: melhor._desvio,
+    label: `${fogo} (${posLabel})`,
+    motivo: `Troque de posição com ${fogo} em ${posLabel} (média ~${melhor._media} mm) para equalizar o desgaste.`,
+  };
+}
+
 /**
  * Classifica o padrão de desgaste com base nos pontos disponíveis.
  * Com 3 pontos: [ext, cent, int]. Com 4: [ext, cent, int, aux].
@@ -79,25 +173,21 @@ export function diagnosticarPerfil(row, toleranciaMm = 1.0) {
 
   if (delta <= toleranciaMm) return DIAGNOSTICOS.ok;
 
-  // Usa ordem Esq→Dir quando há 3+ pontos na sequência
   const seq = pontosSulco(row).filter((v) => v != null && Number.isFinite(v));
   const primeiro = seq[0];
   const ultimo = seq[seq.length - 1];
   const meio = seq.slice(1, -1);
   const mediaMeio = meio.length ? meio.reduce((a, b) => a + b, 0) / meio.length : null;
 
-  // Cunha: diferença clara entre extremos
   if (Math.abs(primeiro - ultimo) >= toleranciaMm) {
     return DIAGNOSTICOS.alinhamento;
   }
 
   if (mediaMeio != null) {
     const mediaBordas = (primeiro + ultimo) / 2;
-    // Centro mais gasto → falta calibragem
     if (mediaBordas - mediaMeio >= toleranciaMm) {
       return DIAGNOSTICOS.falta_calib;
     }
-    // Bordas mais gastas → excesso calibragem
     if (mediaMeio - mediaBordas >= toleranciaMm) {
       return DIAGNOSTICOS.excesso_calib;
     }
@@ -107,39 +197,102 @@ export function diagnosticarPerfil(row, toleranciaMm = 1.0) {
 }
 
 /**
- * Sugere ação operacional com base no menor sulco e vida de recap.
- * Faixas padrão: perda <3 · recap ≥3 e <5 · monitorar 5 a 8 · OK >8
+ * Sugere ação operacional com base no menor sulco, vida de recap e desvio entre os 4 pontos.
+ * Desvio alto → rodízio (antes da recap) para equalizar consumo e evitar recap desnecessária.
+ *
+ * @param {number|null} menorMm
+ * @param {object} limites
+ * @param {number} vidaRecap
+ * @param {{ pontos?: object|null, candidatos?: object[] }} [opcoes]
  */
-export function sugerirAcao(menorMm, limites, vidaRecap = 0) {
-  if (menorMm == null) return { ...ACOES.ok, motivo: 'Sem medição' };
+export function sugerirAcao(menorMm, limites, vidaRecap = 0, opcoes = {}) {
+  const { pontos = null, candidatos = [] } = opcoes;
+  const custom = limites?.acoes || {};
+  const comCustom = (base, chave) => {
+    const c = custom[chave];
+    return {
+      ...base,
+      label: c?.label || base.label,
+      instrucao: c?.instrucao || null,
+    };
+  };
 
-  const critico = limites.sulco_critico_mm; // perda/troca se < critico
-  const recap = limites.sulco_recap_mm ?? 5; // recap se < recap (e ≥ critico)
-  const monitorarAte = limites.sulco_alerta_mm; // monitorar até este valor
+  if (menorMm == null) {
+    const acao = comCustom(ACOES.ok, 'ok');
+    return { ...acao, motivo: 'Sem medição', rodizio_sugestao: null };
+  }
+
+  const critico = limites.sulco_critico_mm;
+  const recap = limites.sulco_recap_mm ?? 5;
+  const monitorarAte = limites.sulco_alerta_mm;
   const maxRecap = limites.max_recaps ?? 6;
+  const rodizioDesvio = limites.rodizio_desvio_mm ?? 3;
 
   if (menorMm < critico) {
-    return { ...ACOES.troca, motivo: `Perda/troca (sulco ${menorMm} mm < ${critico} mm)` };
+    const acao = comCustom(ACOES.troca, 'troca');
+    return {
+      ...acao,
+      motivo: acao.instrucao
+        || `Perda/troca (sulco ${menorMm} mm < ${critico} mm)`,
+      rodizio_sugestao: null,
+    };
+  }
+
+  const desvio = pontos ? desvioEntrePontos(pontos) : null;
+  const precisaRodizio = desvio != null && desvio >= rodizioDesvio;
+
+  if (precisaRodizio) {
+    const acao = comCustom(ACOES.rodizio, 'rodizio');
+    const par = encontrarParRodizio(pontos, candidatos, limites);
+    const pts = valoresValidos(pontos).join(' · ');
+    const baseInstrucao = acao.instrucao
+      || 'Faça rodízio com outro pneu de sulco parecido para o desgaste ficar linear.';
+    const motivo = par
+      ? `${baseInstrucao} Medições: ${pts} mm (desvio ${desvio} mm). ${par.motivo}`
+      : `${baseInstrucao} Medições: ${pts} mm (desvio ${desvio} mm). Não há par parecido neste veículo — use um pneu do estoque com média próxima.`;
+    return {
+      ...acao,
+      motivo,
+      desvio_mm: desvio,
+      rodizio_sugestao: par,
+    };
   }
 
   if (menorMm < recap) {
     if (vidaRecap >= maxRecap) {
-      return { ...ACOES.troca, motivo: `Limite de recaps atingido (${vidaRecap}/${maxRecap})` };
+      const acao = comCustom(ACOES.troca, 'troca');
+      return {
+        ...acao,
+        motivo: `Limite de recaps atingido (${vidaRecap}/${maxRecap}) — ${acao.instrucao || 'trocar'}`,
+        rodizio_sugestao: null,
+      };
     }
+    const acao = comCustom(ACOES.recap, 'recap');
     return {
-      ...ACOES.recap,
-      motivo: `Recapagem (${menorMm} mm — faixa ${critico} a ${recap} mm, vida ${vidaRecap}ª)`,
+      ...acao,
+      motivo: acao.instrucao
+        || `Recapagem (${menorMm} mm — faixa ${critico} a ${recap} mm, vida ${vidaRecap}ª)`,
+      rodizio_sugestao: null,
     };
   }
 
   if (menorMm <= monitorarAte) {
+    const acao = comCustom(ACOES.monitorar, 'monitorar');
     return {
-      ...ACOES.monitorar,
-      motivo: `Monitorar (${menorMm} mm — faixa ${recap} a ${monitorarAte} mm)`,
+      ...acao,
+      motivo: acao.instrucao
+        || `Monitorar (${menorMm} mm — faixa ${recap} a ${monitorarAte} mm)`,
+      rodizio_sugestao: null,
     };
   }
 
-  return { ...ACOES.ok, motivo: `OK (sulco ${menorMm} mm > ${monitorarAte} mm)` };
+  const acao = comCustom(ACOES.ok, 'ok');
+  return {
+    ...acao,
+    motivo: acao.instrucao
+      || `OK (sulco ${menorMm} mm > ${monitorarAte} mm)`,
+    rodizio_sugestao: null,
+  };
 }
 
 /**

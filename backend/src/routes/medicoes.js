@@ -202,7 +202,31 @@ router.post('/', requireAuthOrAcessoRapido, async (req, res) => {
   }
 
   const diag = diagnosticarPerfil(medicaoRow, limites.diagnostico_tolerancia_mm);
-  const acao = sugerirAcao(menor, limites, pneu.vida_recap || 0);
+
+  let candidatos = [];
+  if (pneu.veiculo_id) {
+    candidatos = db.prepare(`
+      SELECT p.id, p.posicao, p.numero_fogo,
+        (SELECT sulco_externo FROM medicoes WHERE pneu_id = p.id ORDER BY data_medicao DESC, id DESC LIMIT 1) as ult_sulco_ext,
+        (SELECT sulco_central FROM medicoes WHERE pneu_id = p.id ORDER BY data_medicao DESC, id DESC LIMIT 1) as ult_sulco_cent,
+        (SELECT sulco_interno FROM medicoes WHERE pneu_id = p.id ORDER BY data_medicao DESC, id DESC LIMIT 1) as ult_sulco_int,
+        (SELECT sulco_auxiliar FROM medicoes WHERE pneu_id = p.id ORDER BY data_medicao DESC, id DESC LIMIT 1) as ult_sulco_aux
+      FROM pneus p
+      WHERE p.veiculo_id = ? AND p.ativo = 1 AND p.status_pneu = 'montado' AND p.id != ?
+    `).all(pneu.veiculo_id, pneu_id).map((c) => ({
+      ...c,
+      posicao_label: c.posicao,
+      sulco_externo: c.ult_sulco_ext,
+      sulco_central: c.ult_sulco_cent,
+      sulco_interno: c.ult_sulco_int,
+      sulco_auxiliar: c.ult_sulco_aux,
+    }));
+  }
+
+  const acao = sugerirAcao(menor, limites, pneu.vida_recap || 0, {
+    pontos: medicaoRow,
+    candidatos,
+  });
   const statusSulco = classificarSulco(menor);
 
   const anterior = db.prepare(`
@@ -310,6 +334,8 @@ router.post('/', requireAuthOrAcessoRapido, async (req, res) => {
     acao_sugerida: acao.codigo,
     acao_label: acao.label,
     acao_motivo: acao.motivo,
+    desvio_mm: acao.desvio_mm ?? null,
+    rodizio_sugestao: acao.rodizio_sugestao || null,
     desgaste_mm_km: desgaste,
     notificacao_whatsapp: notificacao,
     mensagem: 'Medição registrada',

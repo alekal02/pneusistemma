@@ -387,6 +387,8 @@
               </div>
               <div id="truck-perfil" class="truck-perfil"></div>
               <p class="hint" id="truck-diagnostico"></p>
+              <div class="acao-instrucao hidden" id="truck-acao-instrucao"></div>
+              <div class="rodizio-sugestao hidden" id="truck-rodizio-sugestao"></div>
               <p class="hint save-status" id="truck-save-status">Preencha os sulcos — salva automaticamente</p>
               <div id="truck-mini-marker" class="tire-container" style="min-height:240px"></div>
               <div class="panel-actions">
@@ -496,69 +498,164 @@
     </section>
 
     <section id="view-configuracoes" class="view">
-      <h2>Limites e automação</h2>
-      <p class="hint">Defina limiares de sulco, recapagem e diagnóstico de calibragem/alinhamento.</p>
+      <h2>Limites e o que fazer</h2>
+      <p class="hint">
+        Defina até quantos mm cada faixa vale e escreva <strong>o que deve ser feito</strong> quando a medição cair nela.
+        Vale para toda a frota.
+      </p>
 
       <div class="config-layout">
-        <div class="card config-form">
-          <div class="form-group">
-            <label for="cfg-critico">Perda / troca (mm)</label>
-            <input type="number" id="cfg-critico" step="0.1" min="0" max="30" placeholder="Ex: 3">
-            <small class="field-hint">Sulco &lt; este valor → PERDA / TROCA (padrão &lt; 3 mm)</small>
-          </div>
-          <div class="form-group">
-            <label for="cfg-recap">Recapagem até (mm)</label>
-            <input type="number" id="cfg-recap" step="0.1" min="0" max="30" placeholder="Ex: 5">
-            <small class="field-hint">Acima da perda e até este valor → RECAP (padrão &gt;3 e &lt;5)</small>
-          </div>
-          <div class="form-group">
-            <label for="cfg-alerta">Monitorar até (mm)</label>
-            <input type="number" id="cfg-alerta" step="0.1" min="0" max="30" placeholder="Ex: 8">
-            <small class="field-hint">Acima da recap e até este valor → MONITORAR (padrão 5 a 8)</small>
-          </div>
-          <div class="form-group">
-            <label for="cfg-novo">Sulco típico pneu novo (mm)</label>
-            <input type="number" id="cfg-novo" step="0.1" min="0" max="30" placeholder="Ex: 14">
-            <small class="field-hint">Acima de “monitorar até” → OK (padrão &gt; 8 mm)</small>
-          </div>
-          <div class="form-row">
-            <div class="form-group">
-              <label for="cfg-max-recaps">Máx. recaps</label>
-              <input type="number" id="cfg-max-recaps" min="0" max="10" step="1" placeholder="6">
+        <div class="card config-form config-faixas">
+          <h3 class="config-subtitle">Faixas de sulco (mm)</h3>
+
+          <article class="faixa-card faixa-critico">
+            <header>
+              <span class="faixa-badge">1 · Perda / troca</span>
+              <div class="form-group faixa-limite">
+                <label for="cfg-critico">Quando menor que (mm)</label>
+                <input type="number" id="cfg-critico" step="0.1" min="0" max="30" placeholder="3">
+              </div>
+            </header>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="cfg-acao-troca-label">Nome da ação</label>
+                <input type="text" id="cfg-acao-troca-label" maxlength="40" placeholder="Troca">
+              </div>
             </div>
             <div class="form-group">
-              <label for="cfg-tolerancia">Tolerância diagnóstico (mm)</label>
-              <input type="number" id="cfg-tolerancia" step="0.1" min="0" max="5" placeholder="1.0">
+              <label for="cfg-acao-troca-instrucao">O que fazer nesta medição</label>
+              <textarea id="cfg-acao-troca-instrucao" rows="2" maxlength="240" placeholder="Ex: Retirar o pneu — perda/troca obrigatória"></textarea>
             </div>
-          </div>
-          <button class="btn btn-primary" id="btn-salvar-config">Salvar Limites</button>
+          </article>
+
+          <article class="faixa-card faixa-recap">
+            <header>
+              <span class="faixa-badge">2 · Recapagem</span>
+              <div class="form-group faixa-limite">
+                <label for="cfg-recap">Até (mm)</label>
+                <input type="number" id="cfg-recap" step="0.1" min="0" max="30" placeholder="5">
+              </div>
+            </header>
+            <p class="hint faixa-range" id="hint-faixa-recap">Acima da perda e até este valor</p>
+            <div class="form-group">
+              <label for="cfg-acao-recap-label">Nome da ação</label>
+              <input type="text" id="cfg-acao-recap-label" maxlength="40" placeholder="Recapagem">
+            </div>
+            <div class="form-group">
+              <label for="cfg-acao-recap-instrucao">O que fazer nesta medição</label>
+              <textarea id="cfg-acao-recap-instrucao" rows="2" maxlength="240" placeholder="Ex: Enviar para recapagem"></textarea>
+            </div>
+          </article>
+
+          <article class="faixa-card faixa-alerta">
+            <header>
+              <span class="faixa-badge">3 · Monitorar</span>
+              <div class="form-group faixa-limite">
+                <label for="cfg-alerta">Até (mm)</label>
+                <input type="number" id="cfg-alerta" step="0.1" min="0" max="30" placeholder="8">
+              </div>
+            </header>
+            <p class="hint faixa-range" id="hint-faixa-monitorar">Acima da recap e até este valor</p>
+            <div class="form-group">
+              <label for="cfg-acao-monitorar-label">Nome da ação</label>
+              <input type="text" id="cfg-acao-monitorar-label" maxlength="40" placeholder="Monitorar">
+            </div>
+            <div class="form-group">
+              <label for="cfg-acao-monitorar-instrucao">O que fazer nesta medição</label>
+              <textarea id="cfg-acao-monitorar-instrucao" rows="2" maxlength="240" placeholder="Ex: Acompanhar de perto na próxima medição"></textarea>
+            </div>
+          </article>
+
+          <article class="faixa-card faixa-rodizio">
+            <header>
+              <span class="faixa-badge">Rodízio entre pneus</span>
+            </header>
+            <p class="hint" style="margin-top:0">
+              Se as 4 medições (1ª→4ª) tiverem diferença grande — ex.: 5 · 7 · 8 · 10 — o sistema pede rodízio com outro pneu parecido, para o desgaste ficar linear e evitar recap desnecessária.
+            </p>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="cfg-rodizio-desvio">Desvio entre pontos (mm)</label>
+                <input type="number" id="cfg-rodizio-desvio" step="0.1" min="0.5" max="20" placeholder="3">
+                <small class="field-hint">Maior − menor ≥ este valor → sugerir rodízio</small>
+              </div>
+              <div class="form-group">
+                <label for="cfg-rodizio-similaridade">Parecido até (mm)</label>
+                <input type="number" id="cfg-rodizio-similaridade" step="0.1" min="0.5" max="20" placeholder="2.5">
+                <small class="field-hint">Diferença máxima da média para achar o par</small>
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="cfg-acao-rodizio-label">Nome da ação</label>
+              <input type="text" id="cfg-acao-rodizio-label" maxlength="40" placeholder="Rodízio">
+            </div>
+            <div class="form-group">
+              <label for="cfg-acao-rodizio-instrucao">O que fazer</label>
+              <textarea id="cfg-acao-rodizio-instrucao" rows="2" maxlength="240" placeholder="Ex: Faça rodízio com outro pneu de sulco parecido"></textarea>
+            </div>
+          </article>
+
+          <article class="faixa-card faixa-ok">
+            <header>
+              <span class="faixa-badge">4 · OK</span>
+              <strong class="faixa-ok-hint" id="hint-faixa-ok">Acima do monitorar</strong>
+            </header>
+            <div class="form-group">
+              <label for="cfg-acao-ok-label">Nome da ação</label>
+              <input type="text" id="cfg-acao-ok-label" maxlength="40" placeholder="OK">
+            </div>
+            <div class="form-group">
+              <label for="cfg-acao-ok-instrucao">O que fazer nesta medição</label>
+              <textarea id="cfg-acao-ok-instrucao" rows="2" maxlength="240" placeholder="Ex: Manter em operação"></textarea>
+            </div>
+          </article>
+
+          <details class="form-avancado">
+            <summary>Ajustes avançados</summary>
+            <div class="form-group">
+              <label for="cfg-novo">Sulco típico de pneu novo (mm)</label>
+              <input type="number" id="cfg-novo" step="0.1" min="0" max="30" placeholder="14">
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="cfg-max-recaps">Máx. recaps</label>
+                <input type="number" id="cfg-max-recaps" min="0" max="10" step="1" placeholder="6">
+              </div>
+              <div class="form-group">
+                <label for="cfg-tolerancia">Tolerância diagnóstico (mm)</label>
+                <input type="number" id="cfg-tolerancia" step="0.1" min="0" max="5" placeholder="1.0">
+              </div>
+            </div>
+          </details>
+
+          <button class="btn btn-primary" id="btn-salvar-config">Salvar limites e ações</button>
         </div>
 
         <div class="card config-preview">
-          <h3>Classificação automática</h3>
+          <h3>Como o sistema classifica</h3>
           <div class="limite-bar" id="limite-bar">
             <div class="limite-segment critico" id="bar-critico">
-              <span>Perda</span>
+              <span id="preview-label-troca">Perda</span>
               <strong id="preview-critico">&lt; 3 mm</strong>
             </div>
             <div class="limite-segment recap" id="bar-recap">
-              <span>Recap</span>
+              <span id="preview-label-recap">Recap</span>
               <strong id="preview-recap">3 – 5 mm</strong>
             </div>
             <div class="limite-segment alerta" id="bar-alerta">
-              <span>Monitorar</span>
+              <span id="preview-label-monitorar">Monitorar</span>
               <strong id="preview-alerta">5 – 8 mm</strong>
             </div>
             <div class="limite-segment ok" id="bar-ok">
-              <span>OK</span>
+              <span id="preview-label-ok">OK</span>
               <strong id="preview-ok">&gt; 8 mm</strong>
             </div>
           </div>
-          <ul class="config-legenda">
-            <li><span class="dot dot-critico"></span> <strong>Perda:</strong> sulco muito baixo — trocar</li>
-            <li><span class="dot dot-recap"></span> <strong>Recap:</strong> enviar para recapagem</li>
-            <li><span class="dot dot-alerta"></span> <strong>Monitorar:</strong> acompanhar de perto</li>
-            <li><span class="dot dot-ok"></span> <strong>OK:</strong> sulco adequado</li>
+          <ul class="config-legenda" id="config-legenda-acoes">
+            <li><span class="dot dot-critico"></span> <strong id="leg-troca-label">Troca:</strong> <span id="leg-troca-instrucao">—</span></li>
+            <li><span class="dot dot-recap"></span> <strong id="leg-recap-label">Recapagem:</strong> <span id="leg-recap-instrucao">—</span></li>
+            <li><span class="dot dot-alerta"></span> <strong id="leg-monitorar-label">Monitorar:</strong> <span id="leg-monitorar-instrucao">—</span></li>
+            <li><span class="dot dot-ok"></span> <strong id="leg-ok-label">OK:</strong> <span id="leg-ok-instrucao">—</span></li>
           </ul>
           <h3 style="margin-top:1.25rem">Diagnóstico de perfil</h3>
           <ul class="config-legenda">
