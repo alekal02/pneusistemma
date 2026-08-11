@@ -449,18 +449,14 @@ async function openVeiculoDetalhe(id, origem = 'dashboard', dadosPreload = null)
       } else if (v.pneus.length === 0) {
         banner.classList.remove('hidden');
         banner.innerHTML = `
-          <strong>Próximo passo: montar pneus</strong>
-          Cadastre pneus na aba <em>Pneus</em> (se ainda não tiver) e clique nos slots tracejados (+) para posicionar.
-          <br><button type="button" class="btn btn-primary btn-sm" id="btn-banner-pneus">Ir para cadastro de pneus</button>`;
-        banner.querySelector('#btn-banner-pneus')?.addEventListener('click', () => {
-          showView('pneus');
-          loadPneus();
-        });
+          <strong>Clique em uma posição vazia para colocar o pneu</strong>
+          Não precisa ir na aba Pneus: no slot (+) você cria e monta na hora.
+          Se já tiver pneu no estoque, use a aba “Do estoque”.`;
       } else if (v.pneus.length < nPos) {
         banner.classList.remove('hidden');
         banner.innerHTML = `
-          <strong>Montagem em andamento</strong>
-          ${v.pneus.length} de ${nPos} posições com pneu. Clique em um slot vazio (+) para montar mais.`;
+          <strong>${v.pneus.length} de ${nPos} posições com pneu</strong>
+          Clique em um slot vazio (+) para colocar o próximo.`;
       } else {
         banner.classList.add('hidden');
         banner.innerHTML = '';
@@ -669,7 +665,82 @@ async function selecionarSlotVazio(posicao) {
   document.getElementById('truck-pneu-acao').innerHTML = '';
   document.getElementById('truck-pneu-vida').innerHTML = '';
 
+  resetFormMontarNovo();
+  setMontarTab('novo');
   await carregarSelectEstoque();
+}
+
+function resetFormMontarNovo() {
+  const fogo = document.getElementById('truck-novo-fogo');
+  if (fogo) fogo.value = '';
+  const tipo = document.getElementById('truck-novo-tipo');
+  if (tipo) tipo.value = 'misto';
+  const cond = document.getElementById('truck-novo-condicao');
+  if (cond) cond.value = 'novo';
+  const marca = document.getElementById('truck-novo-marca');
+  if (marca) marca.value = '';
+  const dot = document.getElementById('truck-novo-dot');
+  if (dot) dot.value = '';
+  const vida = document.getElementById('truck-novo-vida');
+  if (vida) vida.value = '0';
+  const sulco = document.getElementById('truck-novo-sulco');
+  if (sulco) sulco.value = '';
+  const avancado = document.querySelector('#truck-montar-novo .form-avancado');
+  if (avancado) avancado.open = false;
+}
+
+function setMontarTab(tab) {
+  document.querySelectorAll('.montar-tab').forEach((btn) => {
+    btn.classList.toggle('ativo', btn.dataset.montarTab === tab);
+  });
+  document.getElementById('truck-montar-novo')?.classList.toggle('hidden', tab !== 'novo');
+  document.getElementById('truck-montar-estoque')?.classList.toggle('hidden', tab !== 'estoque');
+}
+
+async function criarEMontarPneuTruck() {
+  if (!veiculoAtual || !slotPosicaoSelecionada) return;
+  const fogo = document.getElementById('truck-novo-fogo')?.value?.trim();
+  if (!fogo) return toast('Informe o nº de fogo', 'error');
+
+  const btn = document.getElementById('btn-truck-criar-montar');
+  if (btn) btn.disabled = true;
+  try {
+    const criado = await fetchJSON(`${API}/pneus`, {
+      method: 'POST',
+      body: JSON.stringify({
+        numero_fogo: fogo,
+        tipo_pneu: document.getElementById('truck-novo-tipo')?.value || 'misto',
+        condicao: document.getElementById('truck-novo-condicao')?.value || 'novo',
+        marca: document.getElementById('truck-novo-marca')?.value || null,
+        dot: document.getElementById('truck-novo-dot')?.value || null,
+        vida_recap: parseInt(document.getElementById('truck-novo-vida')?.value || '0', 10),
+        sulco_inicial_mm: numOrNull('truck-novo-sulco'),
+      }),
+    });
+    const pneuId = criado.pneu?.id || criado.id;
+    if (!pneuId) throw new Error('Pneu criado sem id');
+
+    await fetchJSON(`${API}/pneus/${pneuId}/montar`, {
+      method: 'POST',
+      body: JSON.stringify({
+        veiculo_id: veiculoAtual.id,
+        posicao: slotPosicaoSelecionada,
+        km_veiculo: veiculoAtual.km_atual,
+      }),
+    });
+    toast('Pneu criado e montado');
+    const pos = slotPosicaoSelecionada;
+    await openVeiculoDetalhe(veiculoAtual.id, voltarPara);
+    const montado = veiculoAtual.pneus.find((p) => p.posicao === pos);
+    if (montado) {
+      truckDiagram?.setAtivo(montado.id);
+      selecionarPneuTruck(montado);
+    }
+  } catch (err) {
+    toast(err.message, 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 async function carregarSelectEstoque() {
@@ -872,6 +943,10 @@ async function registrarEventoPneu(tipo) {
   });
 
 document.getElementById('btn-truck-montar')?.addEventListener('click', montarPneuDoEstoque);
+document.getElementById('btn-truck-criar-montar')?.addEventListener('click', criarEMontarPneuTruck);
+document.querySelectorAll('.montar-tab').forEach((btn) => {
+  btn.addEventListener('click', () => setMontarTab(btn.dataset.montarTab));
+});
 document.getElementById('link-ir-pneus')?.addEventListener('click', (e) => {
   e.preventDefault();
   showView('pneus');
@@ -961,12 +1036,12 @@ function setTipoCondicaoEditaveis(editavel) {
   const hintCond = document.getElementById('pneu-condicao-hint');
   if (hintTipo) {
     hintTipo.textContent = editavel
-      ? 'Definido no cadastro — não pode ser alterado depois'
+      ? 'Direcional = dianteira · Misto/Borrachudo = tração'
       : 'Padrão fixo (não pode alterar)';
   }
   if (hintCond) {
     hintCond.textContent = editavel
-      ? 'Só muda ao registrar recap'
+      ? 'Não muda depois (exceto via Registrar recap)'
       : 'Condição fixa — use Registrar recap';
   }
 }
@@ -978,6 +1053,8 @@ function abrirModalPneuNovo() {
   document.getElementById('pneu-tipo').value = 'misto';
   document.getElementById('pneu-condicao').value = 'novo';
   document.getElementById('pneu-vida').value = '0';
+  const avancado = document.getElementById('pneu-avancado');
+  if (avancado) avancado.open = false;
   setTipoCondicaoEditaveis(true);
   document.getElementById('modal-pneu').showModal();
 }
@@ -994,6 +1071,10 @@ async function abrirModalPneu(id) {
     document.getElementById('pneu-condicao').value = p.condicao || 'novo';
     document.getElementById('pneu-vida').value = String(p.vida_recap ?? 0);
     document.getElementById('pneu-sulco-inicial').value = p.sulco_inicial_mm ?? '';
+    const avancado = document.getElementById('pneu-avancado');
+    if (avancado) {
+      avancado.open = !!(p.dot || p.marca || p.sulco_inicial_mm || (p.vida_recap > 0));
+    }
     setTipoCondicaoEditaveis(false);
     document.getElementById('modal-pneu').showModal();
   } catch (err) {
@@ -1035,16 +1116,40 @@ document.getElementById('form-pneu')?.addEventListener('submit', async (e) => {
     } else {
       const result = await fetchJSON(`${API}/pneus`, { method: 'POST', body: JSON.stringify(payload) });
       document.getElementById('modal-pneu').close();
-      toast('Pneu no estoque. Próximo: monte no veículo.', 'success');
       document.getElementById('pneus-filtro-status').value = 'estoque';
       await loadPneus();
-      if (result.pneu?.id) {
-        abrirModalMontar(result.pneu.id, result.pneu.numero_fogo || payload.numero_fogo);
+      const pneuId = result.pneu?.id;
+      const fogo = result.pneu?.numero_fogo || payload.numero_fogo;
+      if (pneuId) {
+        abrirModalPneuPosCriar(pneuId, fogo);
+      } else {
+        toast('Pneu no estoque', 'success');
       }
     }
   } catch (err) {
     toast(err.message, 'error');
   }
+});
+
+function abrirModalPneuPosCriar(pneuId, fogo = '') {
+  document.getElementById('pneu-pos-id').value = String(pneuId);
+  document.getElementById('pneu-pos-fogo').value = fogo || '';
+  document.getElementById('pneu-pos-label').textContent = fogo
+    ? `Fogo ${fogo} está no estoque. Quer montar agora em um veículo?`
+    : 'O pneu está no estoque. Quer montar agora em um veículo?';
+  document.getElementById('modal-pneu-pos').showModal();
+}
+
+document.getElementById('btn-pos-montar')?.addEventListener('click', () => {
+  const id = parseInt(document.getElementById('pneu-pos-id').value, 10);
+  const fogo = document.getElementById('pneu-pos-fogo').value;
+  document.getElementById('modal-pneu-pos').close();
+  if (id) abrirModalMontar(id, fogo);
+});
+
+document.getElementById('btn-pos-estoque')?.addEventListener('click', () => {
+  document.getElementById('modal-pneu-pos').close();
+  toast('Pneu ficou no estoque', 'success');
 });
 
 async function abrirModalMontar(pneuId, fogo = '') {
@@ -1460,7 +1565,7 @@ document.getElementById('form-veiculo').addEventListener('submit', async (e) => 
       }),
     });
     modalVeiculo.close();
-    toast('Veículo cadastrado. Agora cadastre pneus e monte nas posições.', 'success');
+    toast('Veículo pronto — clique nas posições vazias para colocar os pneus', 'success');
     await openVeiculoDetalhe(result.id, 'veiculos');
   } catch (err) {
     toast(err.message, 'error');

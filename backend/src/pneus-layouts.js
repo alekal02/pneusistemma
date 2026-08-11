@@ -81,26 +81,26 @@ export const ORDEM_POSICAO = Object.keys(POSICOES_PNEU);
 export const LAYOUTS_PNEU = {
   truck_10: {
     id: 'truck_10',
-    nome: 'Truck — 10 pneus (2+4+4)',
-    descricao: '3 eixos: dianteiro 2 + eixo 2 duplo (4) + eixo 3 duplo (4)',
+    nome: 'Truck 10 pneus — dianteira + 2 eixos duplos',
+    descricao: '3 eixos: 2 na dianteira + 4 no 2º eixo + 4 no 3º eixo',
     posicoes: ['1E', '1D', '2EE', '2EI', '2DI', '2DE', '3EE', '3EI', '3DI', '3DE'],
   },
   truck_8: {
     id: 'truck_8',
-    nome: 'Truck — 8 pneus (2+4+2)',
-    descricao: '3 eixos: dianteiro 2 + eixo 2 duplo (4) + eixo 3 simples (2)',
+    nome: 'Truck 8 pneus — dianteira + eixo duplo + eixo simples',
+    descricao: '3 eixos: 2 na dianteira + 4 no 2º eixo + 2 no 3º eixo',
     posicoes: ['1E', '1D', '2EE', '2EI', '2DI', '2DE', '3E', '3D'],
   },
   truck_8_b: {
     id: 'truck_8_b',
-    nome: 'Truck — 8 pneus (2+2+4)',
-    descricao: '3 eixos: dianteiro 2 + eixo 2 simples (2) + eixo 3 duplo (4)',
+    nome: 'Truck 8 pneus — dianteira + eixo simples + eixo duplo',
+    descricao: '3 eixos: 2 na dianteira + 2 no 2º eixo + 4 no 3º eixo',
     posicoes: ['1E', '1D', '2E', '2D', '3EE', '3EI', '3DI', '3DE'],
   },
   toco_6: {
     id: 'toco_6',
-    nome: 'Toco / Mini — 6 pneus (2+4)',
-    descricao: '2 eixos: dianteiro 2 + tração dupla (4)',
+    nome: 'Toco / Mini 6 pneus — dianteira + tração dupla',
+    descricao: '2 eixos: 2 na dianteira + 4 na tração',
     posicoes: ['1E', '1D', '2EE', '2EI', '2DI', '2DE'],
   },
   padrao_5: {

@@ -177,8 +177,7 @@
         <div>
           <h3>Carga inicial da frota</h3>
           <p class="hint" style="margin:0">
-            Traga de uma vez os caminhões com pneus <strong>já montados</strong> e o que está no <strong>estoque</strong>.
-            Depois disso, o fluxo diário continua igual: abrir o veículo → medir sulco.
+            Já tem a frota em planilha? Importe caminhões e pneus de uma vez. No dia a dia: abra o veículo e meça o sulco.
           </p>
         </div>
         <div class="section-actions">
@@ -192,11 +191,13 @@
       <div id="import-resultado-frota" class="import-resultado hidden"></div>
 
       <ol class="fluxo-passos">
-        <li class="ativo"><strong>1. Veículo</strong> — cadastre o caminhão</li>
-        <li><strong>2. Pneu</strong> — cadastre no estoque (aba Pneus)</li>
-        <li><strong>3. Montagem</strong> — posicione no diagrama do veículo</li>
+        <li class="ativo"><strong>1.</strong> Cadastre o veículo</li>
+        <li><strong>2.</strong> Abra o diagrama e clique nas posições vazias para colocar os pneus</li>
       </ol>
-      <p class="hint import-hint">Importação avulsa de veículos: layouts <code>truck_10</code>, <code>truck_8</code>, <code>truck_8_b</code>, <code>toco_6</code>.</p>
+      <details class="import-hint-details">
+        <summary>Dica para importação CSV de veículos</summary>
+        <p class="hint import-hint">Layouts aceitos: <code>truck_10</code>, <code>truck_8</code>, <code>truck_8_b</code>, <code>toco_6</code>.</p>
+      </details>
       <div id="import-resultado-veiculos" class="import-resultado hidden"></div>
       <div id="veiculos-lista" class="card-list"></div>
     </section>
@@ -214,12 +215,14 @@
         </div>
       </div>
       <ol class="fluxo-passos">
-        <li><strong>1. Veículo</strong> — já cadastrado</li>
-        <li class="ativo"><strong>2. Pneu</strong> — cadastre aqui no estoque</li>
-        <li><strong>3. Montagem</strong> — use “Montar” ou abra o veículo</li>
+        <li class="ativo"><strong>Estoque</strong> — cadastre pneus avulsos aqui</li>
+        <li><strong>Atalho</strong> — no veículo, clique no slot vazio e crie o pneu na hora</li>
       </ol>
-      <p class="hint">Cadastre o pneu (nº de fogo) antes de medir. Depois monte em uma posição do caminhão.</p>
-      <p class="hint import-hint">Baixe a planilha, preencha os pneus (nº de fogo, tipo, condição) e importe. Tipos: <code>direcional</code> ou <code>misto</code>.</p>
+      <p class="hint">Use esta aba para estoque e histórico. Para montar rápido, prefira o diagrama do veículo.</p>
+      <details class="import-hint-details">
+        <summary>Dica para importação CSV de pneus</summary>
+        <p class="hint import-hint">Campos: nº de fogo, padrão (<code>direcional</code>, <code>misto</code>, <code>borrachudo</code>), condição.</p>
+      </details>
       <div id="import-resultado-pneus" class="import-resultado hidden"></div>
       <div class="pneus-toolbar">
         <div class="form-group" style="margin:0;min-width:140px">
@@ -252,8 +255,8 @@
         </div>
         <div class="card truck-panel" id="truck-panel">
           <div class="truck-panel-empty">
-            <p>Passo 3 — escolha uma posição</p>
-            <p class="hint">Clique no slot tracejado (+) para montar um pneu do estoque, ou num pneu montado para medir.</p>
+            <p>Clique em uma posição</p>
+            <p class="hint">Slot vazio (+) = colocar pneu · Pneu montado = medir sulco</p>
           </div>
           <div class="truck-panel-form hidden" id="truck-panel-form">
             <h3 id="truck-pneu-nome">Pneu</h3>
@@ -263,17 +266,81 @@
               <span id="truck-pneu-vida"></span>
             </div>
 
-            <!-- Slot vazio: montar do estoque -->
+            <!-- Slot vazio: criar e montar OU usar estoque -->
             <div id="truck-montar-box" class="truck-montar-box hidden">
-              <p class="hint">Posição vazia — escolha um pneu do estoque para montar.</p>
-              <div class="form-group">
-                <label for="truck-estoque-select">Pneu do estoque</label>
-                <select id="truck-estoque-select">
-                  <option value="">Carregando...</option>
-                </select>
+              <p class="hint" id="truck-montar-hint">Posição vazia — coloque um pneu aqui.</p>
+              <div class="montar-tabs" role="tablist">
+                <button type="button" class="montar-tab ativo" data-montar-tab="novo" role="tab">Novo pneu</button>
+                <button type="button" class="montar-tab" data-montar-tab="estoque" role="tab">Do estoque</button>
               </div>
-              <button type="button" class="btn btn-primary btn-sm" id="btn-truck-montar">Montar pneu</button>
-              <p class="hint"><a href="#" id="link-ir-pneus">Cadastrar novo pneu na aba Pneus</a></p>
+
+              <div id="truck-montar-novo" class="montar-tab-panel">
+                <div class="form-group">
+                  <label for="truck-novo-fogo">Nº de fogo *</label>
+                  <input type="text" id="truck-novo-fogo" required placeholder="Identificação do pneu" autocomplete="off">
+                </div>
+                <div class="form-row">
+                  <div class="form-group">
+                    <label for="truck-novo-tipo">Padrão *</label>
+                    <select id="truck-novo-tipo">
+                      <option value="direcional">Direcional</option>
+                      <option value="misto" selected>Misto (tração)</option>
+                      <option value="borrachudo">Borrachudo</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label for="truck-novo-condicao">Condição *</label>
+                    <select id="truck-novo-condicao">
+                      <option value="novo">Novo</option>
+                      <option value="recapado">Recapado</option>
+                    </select>
+                  </div>
+                </div>
+                <p class="hint">Direcional = dianteira · Misto/Borrachudo = tração</p>
+                <details class="form-avancado">
+                  <summary>Mais dados (opcional)</summary>
+                  <div class="form-row">
+                    <div class="form-group">
+                      <label for="truck-novo-marca">Marca</label>
+                      <input type="text" id="truck-novo-marca" placeholder="Ex: Michelin">
+                    </div>
+                    <div class="form-group">
+                      <label for="truck-novo-dot">DOT</label>
+                      <input type="text" id="truck-novo-dot" placeholder="Ex: 3522">
+                    </div>
+                  </div>
+                  <div class="form-row">
+                    <div class="form-group">
+                      <label for="truck-novo-vida">Vida (recap)</label>
+                      <select id="truck-novo-vida">
+                        <option value="0">Novo (0)</option>
+                        <option value="1">1ª recap</option>
+                        <option value="2">2ª recap</option>
+                        <option value="3">3ª recap</option>
+                        <option value="4">4ª recap</option>
+                        <option value="5">5ª recap</option>
+                        <option value="6">6ª recap</option>
+                      </select>
+                    </div>
+                    <div class="form-group">
+                      <label for="truck-novo-sulco">Espessura inicial (mm)</label>
+                      <input type="number" id="truck-novo-sulco" step="0.1" min="0" max="30" placeholder="Ex: 14">
+                    </div>
+                  </div>
+                </details>
+                <button type="button" class="btn btn-primary btn-sm" id="btn-truck-criar-montar">Criar e montar</button>
+              </div>
+
+              <div id="truck-montar-estoque" class="montar-tab-panel hidden">
+                <div class="form-group">
+                  <label for="truck-estoque-select">Pneu do estoque</label>
+                  <select id="truck-estoque-select">
+                    <option value="">Carregando...</option>
+                  </select>
+                </div>
+                <button type="button" class="btn btn-primary btn-sm" id="btn-truck-montar">Montar neste veículo</button>
+                <p class="hint"><a href="#" id="link-ir-pneus">Ver todos os pneus na aba Pneus</a></p>
+              </div>
             </div>
 
             <!-- Pneu montado: resumo + medição -->
@@ -508,57 +575,60 @@
   <dialog id="modal-veiculo" class="modal modal-wide modal-veiculo">
     <form id="form-veiculo" method="dialog">
       <h3 id="modal-veiculo-titulo">Novo Veículo</h3>
-      <div class="form-group">
-        <label for="v-placa">Placa *</label>
-        <input type="text" id="v-placa" required placeholder="ABC1D23" maxlength="8">
-      </div>
-      <div class="form-group">
-        <label for="v-apelido">Apelido / Identificação</label>
-        <input type="text" id="v-apelido" placeholder="Ex: Compactador 01">
-      </div>
+      <p class="hint" style="margin-top:0">Informe a placa e a configuração dos eixos. Depois você coloca os pneus no diagrama.</p>
       <div class="form-row">
         <div class="form-group">
-          <label for="v-tipo">Tipo *</label>
-          <select id="v-tipo"></select>
+          <label for="v-placa">Placa *</label>
+          <input type="text" id="v-placa" required placeholder="ABC1D23" maxlength="8">
         </div>
         <div class="form-group">
-          <label for="v-ano">Ano</label>
-          <input type="number" id="v-ano" min="1990" max="2030">
+          <label for="v-apelido">Apelido / nome interno</label>
+          <input type="text" id="v-apelido" placeholder="Ex: Compactador 01">
         </div>
+      </div>
+      <div class="form-group">
+        <label for="v-tipo">Tipo do veículo *</label>
+        <select id="v-tipo"></select>
       </div>
 
       <div class="form-group">
-        <label for="v-layout">Configuração dos eixos (2 ou 4 pneus por eixo)</label>
+        <label for="v-layout">Quantos pneus / eixos?</label>
         <select id="v-layout"></select>
         <small class="field-hint" id="v-layout-desc"></small>
       </div>
       <div id="v-layout-diagram" class="v-layout-diagram"></div>
       <div id="v-layout-preview" class="layout-preview"></div>
-      <p class="hint">Truck: escolha 10 pneus (2+4+4) ou 8 pneus (2+4+2 / 2+2+4). Toco: 6 pneus (2+4).</p>
 
-      <div class="form-row">
-        <div class="form-group">
-          <label for="v-marca">Marca</label>
-          <input type="text" id="v-marca" placeholder="Ex: Mercedes">
+      <details class="form-avancado">
+        <summary>Mais dados (opcional)</summary>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="v-marca">Marca</label>
+            <input type="text" id="v-marca" placeholder="Ex: Mercedes">
+          </div>
+          <div class="form-group">
+            <label for="v-modelo">Modelo</label>
+            <input type="text" id="v-modelo" placeholder="Ex: Atego">
+          </div>
         </div>
-        <div class="form-group">
-          <label for="v-modelo">Modelo</label>
-          <input type="text" id="v-modelo" placeholder="Ex: Atego">
+        <div class="form-row">
+          <div class="form-group">
+            <label for="v-ano">Ano</label>
+            <input type="number" id="v-ano" min="1990" max="2030">
+          </div>
+          <div class="form-group">
+            <label for="v-km">KM atual</label>
+            <input type="number" id="v-km" min="0" value="0">
+          </div>
+          <div class="form-group">
+            <label for="v-hr">Horas atual</label>
+            <input type="number" id="v-hr" min="0" step="0.1" value="0">
+          </div>
         </div>
-      </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label for="v-km">KM Atual</label>
-          <input type="number" id="v-km" min="0" value="0">
-        </div>
-        <div class="form-group">
-          <label for="v-hr">Horas Atual</label>
-          <input type="number" id="v-hr" min="0" step="0.1" value="0">
-        </div>
-      </div>
+      </details>
       <div class="modal-actions">
         <button type="button" class="btn btn-ghost" id="btn-cancelar-veiculo">Cancelar</button>
-        <button type="submit" class="btn btn-primary">Salvar</button>
+        <button type="submit" class="btn btn-primary">Salvar e abrir diagrama</button>
       </div>
     </form>
   </dialog>
@@ -627,62 +697,76 @@
     <form id="form-pneu" method="dialog">
       <h3 id="modal-pneu-titulo">Novo pneu no estoque</h3>
       <input type="hidden" id="pneu-edit-id" value="">
-      <div class="form-row">
-        <div class="form-group">
-          <label for="pneu-fogo">Nº de fogo *</label>
-          <input type="text" id="pneu-fogo" required placeholder="Identificação única">
-        </div>
-        <div class="form-group">
-          <label for="pneu-dot">DOT</label>
-          <input type="text" id="pneu-dot" placeholder="Ex: 3522">
-        </div>
+      <div class="form-group">
+        <label for="pneu-fogo">Nº de fogo *</label>
+        <input type="text" id="pneu-fogo" required placeholder="Identificação única do pneu">
       </div>
       <div class="form-row">
         <div class="form-group">
-          <label for="pneu-marca">Marca</label>
-          <input type="text" id="pneu-marca" placeholder="Ex: Michelin">
-        </div>
-        <div class="form-group">
-          <label for="pneu-tipo">Padrão do pneu *</label>
+          <label for="pneu-tipo">Padrão *</label>
           <select id="pneu-tipo">
             <option value="direcional">Direcional</option>
             <option value="misto" selected>Misto (tração)</option>
             <option value="borrachudo">Borrachudo</option>
           </select>
-          <small class="field-hint" id="pneu-tipo-hint">Definido no cadastro — não pode ser alterado depois</small>
+          <small class="field-hint" id="pneu-tipo-hint">Direcional = dianteira · Misto/Borrachudo = tração</small>
         </div>
-      </div>
-      <div class="form-row">
         <div class="form-group">
           <label for="pneu-condicao">Condição *</label>
           <select id="pneu-condicao">
             <option value="novo">Novo</option>
             <option value="recapado">Recapado</option>
           </select>
-          <small class="field-hint" id="pneu-condicao-hint">Só muda ao registrar recap</small>
-        </div>
-        <div class="form-group">
-          <label for="pneu-vida">Vida (recap)</label>
-          <select id="pneu-vida">
-            <option value="0">Novo (0)</option>
-            <option value="1">1ª recap</option>
-            <option value="2">2ª recap</option>
-            <option value="3">3ª recap</option>
-            <option value="4">4ª recap</option>
-            <option value="5">5ª recap</option>
-            <option value="6">6ª recap</option>
-          </select>
+          <small class="field-hint" id="pneu-condicao-hint">Não muda depois (exceto via Registrar recap)</small>
         </div>
       </div>
-      <div class="form-group">
-        <label for="pneu-sulco-inicial">Espessura inicial (mm)</label>
-        <input type="number" id="pneu-sulco-inicial" step="0.1" min="0" max="30" placeholder="Ex: 14">
-      </div>
+      <details class="form-avancado" id="pneu-avancado">
+        <summary>Mais dados (opcional)</summary>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="pneu-marca">Marca</label>
+            <input type="text" id="pneu-marca" placeholder="Ex: Michelin">
+          </div>
+          <div class="form-group">
+            <label for="pneu-dot">DOT</label>
+            <input type="text" id="pneu-dot" placeholder="Ex: 3522">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="pneu-vida">Vida (recap)</label>
+            <select id="pneu-vida">
+              <option value="0">Novo (0)</option>
+              <option value="1">1ª recap</option>
+              <option value="2">2ª recap</option>
+              <option value="3">3ª recap</option>
+              <option value="4">4ª recap</option>
+              <option value="5">5ª recap</option>
+              <option value="6">6ª recap</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="pneu-sulco-inicial">Espessura inicial (mm)</label>
+            <input type="number" id="pneu-sulco-inicial" step="0.1" min="0" max="30" placeholder="Ex: 14">
+          </div>
+        </div>
+      </details>
       <div class="modal-actions">
         <button type="button" class="btn btn-ghost" id="btn-cancelar-pneu">Cancelar</button>
         <button type="submit" class="btn btn-primary">Salvar</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="modal-pneu-pos" class="modal">
+    <h3>Pneu cadastrado</h3>
+    <p class="hint" id="pneu-pos-label">O pneu está no estoque.</p>
+    <input type="hidden" id="pneu-pos-id" value="">
+    <input type="hidden" id="pneu-pos-fogo" value="">
+    <div class="modal-actions modal-actions-stack">
+      <button type="button" class="btn btn-primary" id="btn-pos-montar">Montar agora no veículo</button>
+      <button type="button" class="btn btn-ghost" id="btn-pos-estoque">Deixar no estoque</button>
+    </div>
   </dialog>
 
   <dialog id="modal-montar" class="modal">

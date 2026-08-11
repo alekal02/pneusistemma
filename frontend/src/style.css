@@ -1071,6 +1071,65 @@ h3 {
   border: 1px dashed #94a3b8;
   border-radius: 10px;
 }
+.montar-tabs {
+  display: flex;
+  gap: .35rem;
+  margin: .5rem 0 .85rem;
+}
+.montar-tab {
+  flex: 1;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #334155;
+  border-radius: 8px;
+  padding: .45rem .6rem;
+  font-size: .85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.montar-tab.ativo {
+  background: #145223;
+  border-color: #145223;
+  color: #fff;
+}
+.montar-tab-panel .form-group {
+  margin-bottom: .65rem;
+}
+.form-avancado {
+  margin: .35rem 0 .85rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: .35rem .65rem .55rem;
+  background: #fff;
+}
+.form-avancado > summary {
+  cursor: pointer;
+  font-size: .85rem;
+  font-weight: 600;
+  color: #475569;
+  padding: .25rem 0;
+  list-style: none;
+}
+.form-avancado > summary::-webkit-details-marker { display: none; }
+.form-avancado > summary::before {
+  content: '+ ';
+  color: #64748b;
+}
+.form-avancado[open] > summary::before { content: '− '; }
+.form-avancado .form-row { margin-top: .5rem; }
+.import-hint-details {
+  margin: .5rem 0 1rem;
+}
+.import-hint-details > summary {
+  cursor: pointer;
+  font-size: .85rem;
+  color: #64748b;
+}
+.modal-actions-stack {
+  flex-direction: column;
+  align-items: stretch;
+}
+.modal-actions-stack .btn { width: 100%; justify-content: center; }
 .tire-pick-vazio { opacity: .92; }
 .tire-pick-vazio .tire-pick-name { color: #64748b; }
 
