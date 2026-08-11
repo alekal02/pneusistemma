@@ -119,20 +119,36 @@
     <section id="view-veiculos" class="view">
       <div class="section-header">
         <h2>Veículos</h2>
-        <button class="btn btn-primary" id="btn-novo-veiculo">+ Novo Veículo</button>
+        <div class="section-actions">
+          <a class="btn btn-ghost" id="btn-modelo-veiculos" href="#">Baixar planilha</a>
+          <label class="btn btn-ghost btn-file">
+            Importar CSV
+            <input type="file" id="file-import-veiculos" accept=".csv,text/csv" hidden>
+          </label>
+          <button class="btn btn-primary" id="btn-novo-veiculo">+ Novo Veículo</button>
+        </div>
       </div>
       <ol class="fluxo-passos">
         <li class="ativo"><strong>1. Veículo</strong> — cadastre o caminhão</li>
         <li><strong>2. Pneu</strong> — cadastre no estoque (aba Pneus)</li>
         <li><strong>3. Montagem</strong> — posicione no diagrama do veículo</li>
       </ol>
+      <p class="hint import-hint">Baixe a planilha, preencha a frota (placa, tipo, layout) e importe o CSV. Layouts: <code>truck_10</code>, <code>truck_8</code>, <code>truck_8_b</code>, <code>toco_6</code>.</p>
+      <div id="import-resultado-veiculos" class="import-resultado hidden"></div>
       <div id="veiculos-lista" class="card-list"></div>
     </section>
 
     <section id="view-pneus" class="view">
       <div class="section-header">
         <h2>Pneus</h2>
-        <button class="btn btn-primary" id="btn-novo-pneu">+ Novo pneu</button>
+        <div class="section-actions">
+          <a class="btn btn-ghost" id="btn-modelo-pneus" href="#">Baixar planilha</a>
+          <label class="btn btn-ghost btn-file">
+            Importar CSV
+            <input type="file" id="file-import-pneus" accept=".csv,text/csv" hidden>
+          </label>
+          <button class="btn btn-primary" id="btn-novo-pneu">+ Novo pneu</button>
+        </div>
       </div>
       <ol class="fluxo-passos">
         <li><strong>1. Veículo</strong> — já cadastrado</li>
@@ -140,6 +156,8 @@
         <li><strong>3. Montagem</strong> — use “Montar” ou abra o veículo</li>
       </ol>
       <p class="hint">Cadastre o pneu (nº de fogo) antes de medir. Depois monte em uma posição do caminhão.</p>
+      <p class="hint import-hint">Baixe a planilha, preencha os pneus (nº de fogo, tipo, condição) e importe. Tipos: <code>direcional</code> ou <code>misto</code>.</p>
+      <div id="import-resultado-pneus" class="import-resultado hidden"></div>
       <div class="pneus-toolbar">
         <div class="form-group" style="margin:0;min-width:140px">
           <label for="pneus-filtro-status">Status</label>
@@ -195,6 +213,23 @@
             <!-- Pneu montado: resumo + medição -->
             <div id="truck-medicao-box">
               <p class="pneu-resumo-compacto" id="truck-pneu-resumo"></p>
+              <div class="form-row pneu-tipo-row">
+                <div class="form-group" style="margin-bottom:.5rem">
+                  <label for="truck-pneu-tipo">Tipo do pneu</label>
+                  <select id="truck-pneu-tipo">
+                    <option value="direcional">Direcional</option>
+                    <option value="misto">Misto</option>
+                  </select>
+                </div>
+                <div class="form-group" style="margin-bottom:.5rem">
+                  <label for="truck-pneu-condicao">Condição</label>
+                  <select id="truck-pneu-condicao">
+                    <option value="novo">Novo</option>
+                    <option value="recapado">Recapado</option>
+                  </select>
+                </div>
+              </div>
+              <p class="hint" id="truck-pneu-tipo-hint"></p>
 
               <h4 class="panel-subtitle">Medição do sulco (Esq → Dir)</h4>
               <div class="form-row form-row-4">

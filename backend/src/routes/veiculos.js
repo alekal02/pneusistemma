@@ -17,6 +17,14 @@ import {
   aplicarLayoutPneus,
   getLayout,
 } from '../pneus-layouts.js';
+import { normalizarTipoVeiculo } from '../fix-encoding.js';
+import {
+  parseCsv,
+  toCsv,
+  VEICULO_TEMPLATE_HEADERS,
+  VEICULO_TEMPLATE_ROWS,
+  mapLayoutId,
+} from '../csv-utils.js';
 
 const router = Router();
 
@@ -32,6 +40,110 @@ router.get('/meta', (_req, res) => {
     layout_padrao: LAYOUT_PADRAO,
     tipos_pneu: TIPOS_PNEU,
     condicoes_pneu: CONDICOES_PNEU,
+  });
+});
+
+/** Planilha-modelo de veículos (CSV Excel BR) */
+router.get('/import/modelo', (_req, res) => {
+  const csv = toCsv(VEICULO_TEMPLATE_HEADERS, VEICULO_TEMPLATE_ROWS);
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="modelo-veiculos.csv"');
+  res.send(csv);
+});
+
+/** Importação em massa de veículos */
+router.post('/import', (req, res) => {
+  const filialId = filialScopeId(req);
+  const db = getDb();
+
+  let rows = Array.isArray(req.body?.itens) ? req.body.itens : null;
+  if (!rows && req.body?.csv) {
+    rows = parseCsv(req.body.csv).rows;
+  }
+  if (!rows?.length) {
+    return res.status(400).json({ erro: 'Nenhuma linha para importar. Envie csv ou itens[].' });
+  }
+
+  const inseridos = [];
+  const erros = [];
+  const avisos = [];
+
+  const insert = db.prepare(`
+    INSERT INTO veiculos (placa, apelido, tipo, marca, modelo, ano, km_atual, hr_atual, observacoes, layout_pneus, filial_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  db.exec('BEGIN');
+  try {
+    for (const raw of rows) {
+      const linha = raw.__linha || '?';
+      const placa = String(raw.placa || '').trim().toUpperCase();
+      if (!placa) {
+        erros.push({ linha, erro: 'Placa obrigatória' });
+        continue;
+      }
+
+      const tipo = normalizarTipoVeiculo(raw.tipo) || 'Truck / Tração';
+      const layoutId = mapLayoutId(raw.layout_pneus || raw.layout, tipo);
+      if (!LAYOUTS_PNEU[layoutId]) {
+        erros.push({ linha, placa, erro: `Layout inválido: ${raw.layout_pneus || raw.layout}` });
+        continue;
+      }
+
+      const ano = raw.ano ? parseInt(raw.ano, 10) : null;
+      const km = raw.km_atual != null && raw.km_atual !== '' ? parseInt(raw.km_atual, 10) : 0;
+      const hr = raw.hr_atual != null && raw.hr_atual !== '' ? parseFloat(raw.hr_atual) : 0;
+
+      try {
+        const result = insert.run(
+          placa,
+          String(raw.apelido || '').trim() || null,
+          tipo,
+          String(raw.marca || '').trim() || null,
+          String(raw.modelo || '').trim() || null,
+          Number.isFinite(ano) ? ano : null,
+          Number.isFinite(km) ? km : 0,
+          Number.isFinite(hr) ? hr : 0,
+          String(raw.observacoes || '').trim() || null,
+          layoutId,
+          filialId
+        );
+        const posicoes = aplicarLayoutPneus(db, result.lastInsertRowid, layoutId, null);
+        inseridos.push({
+          id: result.lastInsertRowid,
+          placa,
+          layout: layoutId,
+          posicoes: posicoes.length,
+        });
+      } catch (err) {
+        if (String(err.message).includes('UNIQUE')) {
+          erros.push({ linha, placa, erro: 'Placa já cadastrada' });
+        } else {
+          erros.push({ linha, placa, erro: err.message });
+        }
+      }
+    }
+    db.exec('COMMIT');
+  } catch (err) {
+    try { db.exec('ROLLBACK'); } catch { /* ignore */ }
+    return res.status(500).json({ erro: err.message });
+  }
+
+  if (!inseridos.length && erros.length) {
+    return res.status(400).json({
+      erro: 'Nenhum veículo importado',
+      inseridos: 0,
+      erros,
+      avisos,
+    });
+  }
+
+  res.status(201).json({
+    mensagem: `${inseridos.length} veículo(s) importado(s)`,
+    inseridos: inseridos.length,
+    detalhes: inseridos,
+    erros,
+    avisos,
   });
 });
 
@@ -65,6 +177,7 @@ router.get('/', (req, res) => {
 
   const resultado = veiculos.map((v) => ({
     ...v,
+    tipo: normalizarTipoVeiculo(v.tipo),
     menor_sulco: v.menor_sulco === 999 ? null : v.menor_sulco,
     status_sulco: classificarSulco(v.menor_sulco === 999 ? null : v.menor_sulco),
   }));
@@ -138,6 +251,7 @@ router.get('/:id', (req, res) => {
 
   res.json({
     ...veiculo,
+    tipo: normalizarTipoVeiculo(veiculo.tipo),
     pneus: pneusComStatus,
     posicoes_layout: posicoesLayout,
     layout: {
@@ -165,7 +279,7 @@ router.post('/', (req, res) => {
     `).run(
       placa.trim().toUpperCase(),
       apelido?.trim() || null,
-      tipo || 'Outro',
+      normalizarTipoVeiculo(tipo) || 'Truck / Tração',
       marca?.trim() || null,
       modelo?.trim() || null,
       ano || null,
@@ -254,7 +368,7 @@ router.put('/:id', (req, res) => {
   `).run(
     placa?.trim().toUpperCase() || null,
     apelido?.trim() || null,
-    tipo || null,
+    tipo != null ? normalizarTipoVeiculo(tipo) : null,
     marca?.trim() || null,
     modelo?.trim() || null,
     ano || null,

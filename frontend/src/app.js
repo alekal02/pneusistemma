@@ -87,7 +87,9 @@ async function fetchJSON(url, options = {}) {
     const msg = data.erro || (resp.status === 404
       ? 'Recurso não encontrado — reinicie o backend (npm run dev)'
       : 'Erro na requisição');
-    throw new Error(msg);
+    const err = new Error(msg);
+    err.data = data;
+    throw err;
   }
   return data;
 }
@@ -126,6 +128,20 @@ function formatDate(d) {
   if (!d) return '-';
   const [y, m, day] = d.split('-');
   return `${day}/${m}/${y}`;
+}
+
+/** Corrige tipos com acento corrompido vindos do banco */
+function normalizarTipoLabel(tipo) {
+  if (!tipo) return tipo;
+  if (/^Truck\s*\/\s*Tra/i.test(tipo) && tipo !== 'Truck / Tração') return 'Truck / Tração';
+  if (tipo.includes('\uFFFD') || tipo.includes('�')) {
+    return tipo
+      .replace(/Truck\s*\/\s*Tra.+?o/i, 'Truck / Tração')
+      .replace(/Caminh.?o/gi, 'Caminhão')
+      .replace(/Utilit.?rio/gi, 'Utilitário')
+      .replace(/Ve.?culo/gi, 'Veículo');
+  }
+  return tipo;
 }
 
 function numOrNull(id) {
@@ -390,7 +406,7 @@ async function openVeiculoDetalhe(id, origem = 'dashboard') {
     const nPos = v.posicoes_layout?.length || v.layout?.posicoes?.length || v.pneus.length;
     document.getElementById('truck-header').innerHTML = `
       <h2>${v.apelido || v.placa}</h2>
-      <p class="hint">${v.placa} · ${v.tipo} · ${v.km_atual?.toLocaleString('pt-BR') || 0} km
+      <p class="hint">${v.placa} · ${normalizarTipoLabel(v.tipo)} · ${v.km_atual?.toLocaleString('pt-BR') || 0} km
         ${v.hr_atual ? ` · ${v.hr_atual} h` : ''}
         · ${layoutInfo?.nome || 'Personalizado'}
         · ${v.pneus.length}/${nPos} pneus montados</p>
@@ -454,6 +470,31 @@ async function openVeiculoDetalhe(id, origem = 'dashboard') {
   }
 }
 
+function atualizarResumoPneuTruck(pneu) {
+  const partes = [];
+  if (pneu.numero_fogo) partes.push(`Fogo ${pneu.numero_fogo}`);
+  if (pneu.marca) partes.push(pneu.marca);
+  if (pneu.dot) partes.push(`DOT ${pneu.dot}`);
+  document.getElementById('truck-pneu-resumo').textContent = partes.length
+    ? partes.join(' · ')
+    : 'Altere o tipo ou a condição abaixo, se necessário.';
+
+  const papel = pneu.papel_posicao || meta?.papeis?.[pneu.posicao];
+  const hint = document.getElementById('truck-pneu-tipo-hint');
+  if (!hint) return;
+  if (papel === 'direcional' && pneu.tipo_pneu === 'misto') {
+    hint.textContent = 'Posição dianteira: o ideal é pneu direcional.';
+  } else if (papel === 'tracao' && pneu.tipo_pneu === 'direcional') {
+    hint.textContent = 'Eixo de tração: costuma-se usar pneu misto.';
+  } else if (papel === 'direcional' && pneu.condicao === 'recapado') {
+    hint.textContent = 'Atenção: recapado na dianteira não é recomendado.';
+  } else {
+    hint.textContent = papel === 'direcional'
+      ? 'Posição dianteira (direcional).'
+      : 'Posição de tração — pode usar misto ou direcional.';
+  }
+}
+
 function selecionarPneuTruck(pneu) {
   pneuSelecionado = pneu;
   slotPosicaoSelecionada = null;
@@ -471,13 +512,12 @@ function selecionarPneuTruck(pneu) {
     ? `<span class="badge badge-vida">${pneu.vida_label}${pneu.vida_util_pct != null ? ` · ${pneu.vida_util_pct}%` : ''}</span>`
     : '';
 
-  const partes = [];
-  if (pneu.numero_fogo) partes.push(`Fogo ${pneu.numero_fogo}`);
-  if (pneu.marca) partes.push(pneu.marca);
-  if (pneu.dot) partes.push(`DOT ${pneu.dot}`);
-  partes.push(pneu.tipo_pneu === 'direcional' ? 'Direcional' : 'Misto');
-  partes.push(pneu.vida_label || (pneu.condicao === 'novo' ? 'Novo' : 'Recapado'));
-  document.getElementById('truck-pneu-resumo').textContent = partes.join(' · ');
+  atualizarResumoPneuTruck(pneu);
+
+  const selTipo = document.getElementById('truck-pneu-tipo');
+  const selCond = document.getElementById('truck-pneu-condicao');
+  if (selTipo) selTipo.value = pneu.tipo_pneu === 'direcional' ? 'direcional' : 'misto';
+  if (selCond) selCond.value = pneu.condicao === 'recapado' ? 'recapado' : 'novo';
 
   document.getElementById('truck-sulco-ext').value = pneu.ult_sulco_ext ?? '';
   document.getElementById('truck-sulco-cent').value = pneu.ult_sulco_cent ?? '';
@@ -531,6 +571,65 @@ function selecionarPneuTruck(pneu) {
   document.getElementById('btn-truck-desmontar').onclick = () => desmontarPneuTruck();
   document.getElementById('btn-truck-recap').onclick = () => registrarEventoPneu('recap');
   document.getElementById('btn-truck-troca').onclick = () => registrarEventoPneu('troca');
+}
+
+async function salvarTipoPneuTruck() {
+  if (!pneuSelecionado?.id) return;
+  const tipo_pneu = document.getElementById('truck-pneu-tipo')?.value || 'misto';
+  const condicao = document.getElementById('truck-pneu-condicao')?.value || 'novo';
+
+  if (tipo_pneu === pneuSelecionado.tipo_pneu && condicao === pneuSelecionado.condicao) {
+    atualizarResumoPneuTruck(pneuSelecionado);
+    return;
+  }
+
+  try {
+    const result = await fetchJSON(`${API}/pneus/${pneuSelecionado.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        marca: pneuSelecionado.marca,
+        modelo: pneuSelecionado.modelo,
+        medida: pneuSelecionado.medida,
+        dot: pneuSelecionado.dot,
+        numero_fogo: pneuSelecionado.numero_fogo,
+        tipo_pneu,
+        condicao,
+        vida_recap: pneuSelecionado.vida_recap,
+        sulco_inicial_mm: pneuSelecionado.sulco_inicial_mm,
+        observacoes: pneuSelecionado.observacoes,
+      }),
+    });
+
+    const atualizado = result.pneu || {};
+    pneuSelecionado = {
+      ...pneuSelecionado,
+      ...atualizado,
+      tipo_pneu,
+      condicao,
+      vida_label: atualizado.vida_label
+        || (condicao === 'recapado'
+          ? `${pneuSelecionado.vida_recap || 1}ª recap`
+          : 'Novo'),
+    };
+
+    if (veiculoAtual?.pneus) {
+      const idx = veiculoAtual.pneus.findIndex((p) => p.id === pneuSelecionado.id);
+      if (idx >= 0) veiculoAtual.pneus[idx] = { ...veiculoAtual.pneus[idx], ...pneuSelecionado };
+    }
+
+    document.getElementById('truck-pneu-vida').innerHTML = pneuSelecionado.vida_label
+      ? `<span class="badge badge-vida">${pneuSelecionado.vida_label}</span>`
+      : '';
+    atualizarResumoPneuTruck(pneuSelecionado);
+    toast(result.mensagem || 'Tipo do pneu atualizado', 'success');
+  } catch (err) {
+    // reverte selects
+    const selTipo = document.getElementById('truck-pneu-tipo');
+    const selCond = document.getElementById('truck-pneu-condicao');
+    if (selTipo) selTipo.value = pneuSelecionado.tipo_pneu === 'direcional' ? 'direcional' : 'misto';
+    if (selCond) selCond.value = pneuSelecionado.condicao === 'recapado' ? 'recapado' : 'novo';
+    toast(err.message, 'error');
+  }
 }
 
 async function selecionarSlotVazio(posicao) {
@@ -738,6 +837,8 @@ async function registrarEventoPneu(tipo) {
   });
 
 document.getElementById('btn-truck-montar')?.addEventListener('click', montarPneuDoEstoque);
+document.getElementById('truck-pneu-tipo')?.addEventListener('change', salvarTipoPneuTruck);
+document.getElementById('truck-pneu-condicao')?.addEventListener('change', salvarTipoPneuTruck);
 document.getElementById('link-ir-pneus')?.addEventListener('click', (e) => {
   e.preventDefault();
   showView('pneus');
@@ -1113,6 +1214,92 @@ function abrirConfigLayout(veiculoId, veiculoNome, layoutAtual, posicoesAtuais) 
 }
 
 window.abrirConfigLayout = abrirConfigLayout;
+
+// ── Importação CSV (veículos / pneus) ───────────────────
+
+async function baixarModeloCsv(url, filename) {
+  try {
+    const headers = {};
+    if (authToken) headers.Authorization = `Bearer ${authToken}`;
+    const resp = await fetch(url, { headers });
+    if (!resp.ok) {
+      let msg = 'Falha ao baixar planilha';
+      try {
+        const data = await resp.json();
+        msg = data.erro || msg;
+      } catch { /* ignore */ }
+      throw new Error(msg);
+    }
+    const blob = await resp.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+function mostrarResultadoImport(elId, result) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  const erros = result.erros || [];
+  el.classList.remove('hidden');
+  el.innerHTML = `
+    <strong>${result.mensagem || 'Importação concluída'}</strong>
+    <p class="hint" style="margin:.35rem 0 0">
+      Inseridos: <strong>${result.inseridos ?? 0}</strong>
+      ${erros.length ? ` · Com erro: <strong>${erros.length}</strong>` : ''}
+    </p>
+    ${erros.length
+      ? `<ul class="import-erros">${erros.slice(0, 12).map((e) =>
+          `<li>Linha ${e.linha}${e.placa || e.numero_fogo ? ` (${e.placa || e.numero_fogo})` : ''}: ${e.erro}</li>`
+        ).join('')}${erros.length > 12 ? `<li>… e mais ${erros.length - 12}</li>` : ''}</ul>`
+      : ''}
+  `;
+}
+
+async function importarCsvArquivo(file, endpoint, resultadoId, onOk) {
+  if (!file) return;
+  try {
+    const csv = await file.text();
+    if (!csv.trim()) throw new Error('Arquivo vazio');
+    const result = await fetchJSON(endpoint, {
+      method: 'POST',
+      body: JSON.stringify({ csv }),
+    });
+    mostrarResultadoImport(resultadoId, result);
+    toast(result.mensagem || 'Importação concluída', 'success');
+    onOk?.(result);
+  } catch (err) {
+    const data = err.data;
+    if (data?.erros) {
+      mostrarResultadoImport(resultadoId, data);
+    }
+    toast(err.message, 'error');
+  }
+}
+
+document.getElementById('btn-modelo-veiculos')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  baixarModeloCsv(`${API}/veiculos/import/modelo`, 'modelo-veiculos.csv');
+});
+document.getElementById('file-import-veiculos')?.addEventListener('change', async (e) => {
+  const file = e.target.files?.[0];
+  e.target.value = '';
+  await importarCsvArquivo(file, `${API}/veiculos/import`, 'import-resultado-veiculos', () => loadVeiculos());
+});
+
+document.getElementById('btn-modelo-pneus')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  baixarModeloCsv(`${API}/pneus/import/modelo`, 'modelo-pneus.csv');
+});
+document.getElementById('file-import-pneus')?.addEventListener('change', async (e) => {
+  const file = e.target.files?.[0];
+  e.target.value = '';
+  await importarCsvArquivo(file, `${API}/pneus/import`, 'import-resultado-pneus', () => loadPneus());
+});
 
 // ── Modal Veículo ──────────────────────────────────────
 

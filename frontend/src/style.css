@@ -153,6 +153,37 @@ body {
   flex-wrap: wrap;
   gap: .75rem;
 }
+.section-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .45rem;
+  align-items: center;
+}
+.btn-file {
+  cursor: pointer;
+  margin: 0;
+}
+.btn-file input { display: none; }
+.import-hint code {
+  font-size: .78rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: .05rem .3rem;
+  border-radius: 4px;
+}
+.import-resultado {
+  margin: 0 0 1rem;
+  padding: .85rem 1rem;
+  background: var(--brand-soft);
+  border: 1px solid var(--brand-mist);
+  border-radius: var(--radius-sm);
+}
+.import-erros {
+  margin: .5rem 0 0;
+  padding-left: 1.1rem;
+  font-size: .82rem;
+  color: #9a3412;
+}
 
 h2 {
   font-family: var(--font-display);
@@ -991,6 +1022,13 @@ h3 {
   background: #f8fafc;
   border-radius: 8px;
   border: 1px solid #e2e8f0;
+}
+.pneu-tipo-row {
+  margin-bottom: .35rem;
+}
+#truck-pneu-tipo-hint {
+  margin: 0 0 .85rem;
+  font-size: .78rem;
 }
 .truck-montar-box {
   margin-top: .75rem;

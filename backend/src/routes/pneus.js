@@ -23,6 +23,14 @@ import {
   assertPneuDaFilial,
   assertVeiculoDaFilial,
 } from '../auth.js';
+import {
+  parseCsv,
+  toCsv,
+  PNEU_TEMPLATE_HEADERS,
+  PNEU_TEMPLATE_ROWS,
+  mapTipoPneu,
+  mapCondicao,
+} from '../csv-utils.js';
 
 const router = Router();
 
@@ -71,6 +79,104 @@ router.get('/meta', (_req, res) => {
     condicoes: CONDICOES_PNEU,
     status: STATUS_PNEU,
     vidas_recap: [0, 1, 2, 3, 4, 5, 6],
+  });
+});
+
+/** Planilha-modelo de pneus (CSV Excel BR) */
+router.get('/import/modelo', (_req, res) => {
+  const csv = toCsv(PNEU_TEMPLATE_HEADERS, PNEU_TEMPLATE_ROWS);
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="modelo-pneus.csv"');
+  res.send(csv);
+});
+
+/** Importação em massa de pneus para o estoque */
+router.post('/import', (req, res) => {
+  const filialId = filialScopeId(req);
+  const db = getDb();
+
+  let rows = Array.isArray(req.body?.itens) ? req.body.itens : null;
+  if (!rows && req.body?.csv) {
+    rows = parseCsv(req.body.csv).rows;
+  }
+  if (!rows?.length) {
+    return res.status(400).json({ erro: 'Nenhuma linha para importar. Envie csv ou itens[].' });
+  }
+
+  const inseridos = [];
+  const erros = [];
+
+  const insert = db.prepare(`
+    INSERT INTO pneus (
+      veiculo_id, posicao, filial_id, marca, modelo, medida, dot, numero_fogo,
+      tipo_pneu, condicao, vida_recap, sulco_inicial_mm, status_pneu, ativo, observacoes
+    ) VALUES (NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'estoque', 1, ?)
+  `);
+
+  db.exec('BEGIN');
+  try {
+    for (const raw of rows) {
+      const linha = raw.__linha || '?';
+      const fogo = String(raw.numero_fogo || raw.fogo || '').trim();
+      if (!fogo) {
+        erros.push({ linha, erro: 'Nº de fogo obrigatório' });
+        continue;
+      }
+
+      const tipo = mapTipoPneu(raw.tipo_pneu || raw.tipo);
+      const cond = mapCondicao(raw.condicao);
+      let vida = raw.vida_recap != null && raw.vida_recap !== ''
+        ? parseInt(raw.vida_recap, 10)
+        : (cond === 'recapado' ? 1 : 0);
+      if (!Number.isFinite(vida) || vida < 0) vida = 0;
+      if (cond === 'novo') vida = 0;
+
+      const sulco = raw.sulco_inicial_mm != null && raw.sulco_inicial_mm !== ''
+        ? parseFloat(String(raw.sulco_inicial_mm).replace(',', '.'))
+        : null;
+
+      try {
+        const result = insert.run(
+          filialId,
+          String(raw.marca || '').trim() || null,
+          String(raw.modelo || '').trim() || null,
+          String(raw.medida || '').trim() || null,
+          String(raw.dot || '').trim() || null,
+          fogo,
+          tipo,
+          cond,
+          vida,
+          Number.isFinite(sulco) ? sulco : null,
+          String(raw.observacoes || '').trim() || null
+        );
+        inseridos.push({ id: result.lastInsertRowid, numero_fogo: fogo, tipo_pneu: tipo, condicao: cond });
+      } catch (err) {
+        if (String(err.message).includes('UNIQUE')) {
+          erros.push({ linha, numero_fogo: fogo, erro: 'Nº de fogo já existe nesta filial' });
+        } else {
+          erros.push({ linha, numero_fogo: fogo, erro: err.message });
+        }
+      }
+    }
+    db.exec('COMMIT');
+  } catch (err) {
+    try { db.exec('ROLLBACK'); } catch { /* ignore */ }
+    return res.status(500).json({ erro: err.message });
+  }
+
+  if (!inseridos.length && erros.length) {
+    return res.status(400).json({
+      erro: 'Nenhum pneu importado',
+      inseridos: 0,
+      erros,
+    });
+  }
+
+  res.status(201).json({
+    mensagem: `${inseridos.length} pneu(s) importado(s) no estoque`,
+    inseridos: inseridos.length,
+    detalhes: inseridos,
+    erros,
   });
 });
 

@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import bcrypt from 'bcryptjs';
 import { config } from './config.js';
+import { corrigirEncodingBanco } from './fix-encoding.js';
 
 const dataDir = path.dirname(config.dbPath);
 if (!fs.existsSync(dataDir)) {
@@ -288,6 +289,9 @@ function migratePneusEstoque(filialFallbackId) {
 
 const matrizId = seedAuthAndFilial();
 migratePneusEstoque(matrizId);
+
+// Corrige acentos/corrompidos salvos no SQLite (ex.: Tração → Tra��o)
+corrigirEncodingBanco(db);
 
 export function getDb() {
   return db;
