@@ -58,7 +58,6 @@
       <button class="tab" data-view="medicao">Nova Medição</button>
       <button class="tab" data-view="alertas">Alertas</button>
       <button class="tab" data-view="acoes">Ações</button>
-      <button class="tab" data-view="configuracoes">Configurações</button>
     </nav>
     <nav class="nav-tabs hidden" id="nav-tabs-admin">
       <button class="tab active" data-view="filiais">Filiais</button>
@@ -165,20 +164,39 @@
       <div class="section-header">
         <h2>Veículos</h2>
         <div class="section-actions">
-          <a class="btn btn-ghost" id="btn-modelo-veiculos" href="#">Baixar planilha</a>
+          <a class="btn btn-ghost" id="btn-modelo-veiculos" href="#">Baixar planilha veículos</a>
           <label class="btn btn-ghost btn-file">
-            Importar CSV
+            Importar veículos
             <input type="file" id="file-import-veiculos" accept=".csv,text/csv" hidden>
           </label>
           <button class="btn btn-primary" id="btn-novo-veiculo">+ Novo Veículo</button>
         </div>
       </div>
+
+      <div class="carga-frota-banner card">
+        <div>
+          <h3>Carga inicial da frota</h3>
+          <p class="hint" style="margin:0">
+            Traga de uma vez os caminhões com pneus <strong>já montados</strong> e o que está no <strong>estoque</strong>.
+            Depois disso, o fluxo diário continua igual: abrir o veículo → medir sulco.
+          </p>
+        </div>
+        <div class="section-actions">
+          <a class="btn btn-primary" id="btn-modelo-frota" href="#">Baixar planilha da frota</a>
+          <label class="btn btn-ghost btn-file">
+            Importar carga da frota
+            <input type="file" id="file-import-frota" accept=".csv,text/csv" hidden>
+          </label>
+        </div>
+      </div>
+      <div id="import-resultado-frota" class="import-resultado hidden"></div>
+
       <ol class="fluxo-passos">
         <li class="ativo"><strong>1. Veículo</strong> — cadastre o caminhão</li>
         <li><strong>2. Pneu</strong> — cadastre no estoque (aba Pneus)</li>
         <li><strong>3. Montagem</strong> — posicione no diagrama do veículo</li>
       </ol>
-      <p class="hint import-hint">Baixe a planilha, preencha a frota (placa, tipo, layout) e importe o CSV. Layouts: <code>truck_10</code>, <code>truck_8</code>, <code>truck_8_b</code>, <code>toco_6</code>.</p>
+      <p class="hint import-hint">Importação avulsa de veículos: layouts <code>truck_10</code>, <code>truck_8</code>, <code>truck_8_b</code>, <code>toco_6</code>.</p>
       <div id="import-resultado-veiculos" class="import-resultado hidden"></div>
       <div id="veiculos-lista" class="card-list"></div>
     </section>
@@ -261,23 +279,11 @@
             <!-- Pneu montado: resumo + medição -->
             <div id="truck-medicao-box">
               <p class="pneu-resumo-compacto" id="truck-pneu-resumo"></p>
-              <div class="form-row pneu-tipo-row">
-                <div class="form-group" style="margin-bottom:.5rem">
-                  <label for="truck-pneu-tipo">Tipo do pneu</label>
-                  <select id="truck-pneu-tipo">
-                    <option value="direcional">Direcional</option>
-                    <option value="misto">Misto</option>
-                  </select>
-                </div>
-                <div class="form-group" style="margin-bottom:.5rem">
-                  <label for="truck-pneu-condicao">Condição</label>
-                  <select id="truck-pneu-condicao">
-                    <option value="novo">Novo</option>
-                    <option value="recapado">Recapado</option>
-                  </select>
-                </div>
+              <div class="pneu-info-fixa" id="truck-pneu-info-fixa">
+                <div><span class="label">Padrão</span><strong id="truck-pneu-padrao">—</strong></div>
+                <div><span class="label">Condição</span><strong id="truck-pneu-condicao-label">—</strong></div>
+                <div class="span-2"><span class="label">Última medição de sulco</span><strong id="truck-pneu-ultima-sulco">Sem medição</strong></div>
               </div>
-              <p class="hint" id="truck-pneu-tipo-hint"></p>
 
               <h4 class="panel-subtitle">Medição do sulco (Esq → Dir)</h4>
               <div class="form-row form-row-4">
@@ -429,23 +435,24 @@
       <div class="config-layout">
         <div class="card config-form">
           <div class="form-group">
-            <label for="cfg-critico">Crítico — troca (mm)</label>
-            <input type="number" id="cfg-critico" step="0.1" min="0" max="30" placeholder="Ex: 1.5">
-            <small class="field-hint">Abaixo deste valor: ação TROCA (padrão legal ~1,5–1,6 mm)</small>
+            <label for="cfg-critico">Perda / troca (mm)</label>
+            <input type="number" id="cfg-critico" step="0.1" min="0" max="30" placeholder="Ex: 3">
+            <small class="field-hint">Sulco &lt; este valor → PERDA / TROCA (padrão &lt; 3 mm)</small>
           </div>
           <div class="form-group">
-            <label for="cfg-alerta">Alerta — monitorar (mm)</label>
-            <input type="number" id="cfg-alerta" step="0.1" min="0" max="30" placeholder="Ex: 3.0">
-            <small class="field-hint">Entre crítico e este valor: MONITORAR</small>
+            <label for="cfg-recap">Recapagem até (mm)</label>
+            <input type="number" id="cfg-recap" step="0.1" min="0" max="30" placeholder="Ex: 5">
+            <small class="field-hint">Acima da perda e até este valor → RECAP (padrão &gt;3 e &lt;5)</small>
           </div>
           <div class="form-group">
-            <label for="cfg-recap">Limiar de recapagem (mm)</label>
-            <input type="number" id="cfg-recap" step="0.1" min="0" max="30" placeholder="Ex: 5.0">
-            <small class="field-hint">Até este valor: sugerir RECAP (se ainda houver vidas)</small>
+            <label for="cfg-alerta">Monitorar até (mm)</label>
+            <input type="number" id="cfg-alerta" step="0.1" min="0" max="30" placeholder="Ex: 8">
+            <small class="field-hint">Acima da recap e até este valor → MONITORAR (padrão 5 a 8)</small>
           </div>
           <div class="form-group">
             <label for="cfg-novo">Sulco típico pneu novo (mm)</label>
             <input type="number" id="cfg-novo" step="0.1" min="0" max="30" placeholder="Ex: 14">
+            <small class="field-hint">Acima de “monitorar até” → OK (padrão &gt; 8 mm)</small>
           </div>
           <div class="form-row">
             <div class="form-group">
@@ -464,27 +471,27 @@
           <h3>Classificação automática</h3>
           <div class="limite-bar" id="limite-bar">
             <div class="limite-segment critico" id="bar-critico">
-              <span>Troca</span>
-              <strong id="preview-critico">≤ 1.6 mm</strong>
-            </div>
-            <div class="limite-segment alerta" id="bar-alerta">
-              <span>Monitorar</span>
-              <strong id="preview-alerta">1.6 – 3.0 mm</strong>
+              <span>Perda</span>
+              <strong id="preview-critico">&lt; 3 mm</strong>
             </div>
             <div class="limite-segment recap" id="bar-recap">
               <span>Recap</span>
-              <strong id="preview-recap">até 5.0 mm</strong>
+              <strong id="preview-recap">3 – 5 mm</strong>
+            </div>
+            <div class="limite-segment alerta" id="bar-alerta">
+              <span>Monitorar</span>
+              <strong id="preview-alerta">5 – 8 mm</strong>
             </div>
             <div class="limite-segment ok" id="bar-ok">
               <span>OK</span>
-              <strong id="preview-ok">&gt; 5.0 mm</strong>
+              <strong id="preview-ok">&gt; 8 mm</strong>
             </div>
           </div>
           <ul class="config-legenda">
-            <li><span class="dot dot-critico"></span> <strong>Troca:</strong> sulco no limite legal</li>
-            <li><span class="dot dot-alerta"></span> <strong>Monitorar:</strong> desgaste avançado</li>
-            <li><span class="dot dot-recap"></span> <strong>Recap:</strong> candidato a recapagem</li>
-            <li><span class="dot dot-ok"></span> <strong>OK:</strong> dentro do aceitável</li>
+            <li><span class="dot dot-critico"></span> <strong>Perda:</strong> sulco muito baixo — trocar</li>
+            <li><span class="dot dot-recap"></span> <strong>Recap:</strong> enviar para recapagem</li>
+            <li><span class="dot dot-alerta"></span> <strong>Monitorar:</strong> acompanhar de perto</li>
+            <li><span class="dot dot-ok"></span> <strong>OK:</strong> sulco adequado</li>
           </ul>
           <h3 style="margin-top:1.25rem">Diagnóstico de perfil</h3>
           <ul class="config-legenda">
@@ -636,20 +643,23 @@
           <input type="text" id="pneu-marca" placeholder="Ex: Michelin">
         </div>
         <div class="form-group">
-          <label for="pneu-tipo">Tipo</label>
+          <label for="pneu-tipo">Padrão do pneu *</label>
           <select id="pneu-tipo">
             <option value="direcional">Direcional</option>
             <option value="misto" selected>Misto (tração)</option>
+            <option value="borrachudo">Borrachudo</option>
           </select>
+          <small class="field-hint" id="pneu-tipo-hint">Definido no cadastro — não pode ser alterado depois</small>
         </div>
       </div>
       <div class="form-row">
         <div class="form-group">
-          <label for="pneu-condicao">Condição</label>
+          <label for="pneu-condicao">Condição *</label>
           <select id="pneu-condicao">
             <option value="novo">Novo</option>
             <option value="recapado">Recapado</option>
           </select>
+          <small class="field-hint" id="pneu-condicao-hint">Só muda ao registrar recap</small>
         </div>
         <div class="form-group">
           <label for="pneu-vida">Vida (recap)</label>

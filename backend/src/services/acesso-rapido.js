@@ -15,6 +15,7 @@ import {
   papelPosicao,
   sqlOrderPosicao,
   getLayout,
+  labelTipoPneu,
 } from '../pneus-layouts.js';
 
 export function gerarTokenAcessoRapido({ veiculoId, filialId, whatsappOrigem = null }) {
@@ -96,6 +97,8 @@ export function montarDetalheVeiculo(veiculoId, filialId = null) {
       ...p,
       posicao_label: labelPosicao(p.posicao),
       papel_posicao: papelPosicao(p.posicao),
+      padrao: p.tipo_pneu,
+      padrao_label: labelTipoPneu(p.tipo_pneu),
       menor_sulco: menor,
       status_sulco: classificarSulco(menor),
       diagnostico: p.ult_diagnostico || diag.codigo,
@@ -107,6 +110,16 @@ export function montarDetalheVeiculo(veiculoId, filialId = null) {
       vida_label: p.vida_recap > 0
         ? `${p.vida_recap}ª recap`
         : (p.condicao === 'novo' ? 'Novo' : 'Recapado'),
+      ultima_medicao: p.ult_medicao || menor != null
+        ? {
+          data: p.ult_medicao || null,
+          sulco_externo: p.ult_sulco_ext,
+          sulco_central: p.ult_sulco_cent,
+          sulco_interno: p.ult_sulco_int,
+          sulco_auxiliar: p.ult_sulco_aux,
+          menor_sulco: menor,
+        }
+        : null,
     };
   });
 

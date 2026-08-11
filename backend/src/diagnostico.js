@@ -108,32 +108,38 @@ export function diagnosticarPerfil(row, toleranciaMm = 1.0) {
 
 /**
  * Sugere ação operacional com base no menor sulco e vida de recap.
+ * Faixas padrão: perda <3 · recap ≥3 e <5 · monitorar 5 a 8 · OK >8
  */
 export function sugerirAcao(menorMm, limites, vidaRecap = 0) {
   if (menorMm == null) return { ...ACOES.ok, motivo: 'Sem medição' };
 
-  const critico = limites.sulco_critico_mm;
-  const alerta = limites.sulco_alerta_mm;
-  const recap = limites.sulco_recap_mm ?? 5;
+  const critico = limites.sulco_critico_mm; // perda/troca se < critico
+  const recap = limites.sulco_recap_mm ?? 5; // recap se < recap (e ≥ critico)
+  const monitorarAte = limites.sulco_alerta_mm; // monitorar até este valor
   const maxRecap = limites.max_recaps ?? 6;
 
-  if (menorMm <= critico) {
-    return { ...ACOES.troca, motivo: `Sulco crítico (${menorMm} mm ≤ ${critico} mm)` };
+  if (menorMm < critico) {
+    return { ...ACOES.troca, motivo: `Perda/troca (sulco ${menorMm} mm < ${critico} mm)` };
   }
 
-  if (menorMm <= alerta) {
-    return { ...ACOES.monitorar, motivo: `Sulco em alerta (${menorMm} mm ≤ ${alerta} mm)` };
+  if (menorMm < recap) {
+    if (vidaRecap >= maxRecap) {
+      return { ...ACOES.troca, motivo: `Limite de recaps atingido (${vidaRecap}/${maxRecap})` };
+    }
+    return {
+      ...ACOES.recap,
+      motivo: `Recapagem (${menorMm} mm — faixa ${critico} a ${recap} mm, vida ${vidaRecap}ª)`,
+    };
   }
 
-  if (menorMm <= recap && vidaRecap < maxRecap) {
-    return { ...ACOES.recap, motivo: `Indicado para recapagem (${menorMm} mm ≤ ${recap} mm, vida ${vidaRecap}ª)` };
+  if (menorMm <= monitorarAte) {
+    return {
+      ...ACOES.monitorar,
+      motivo: `Monitorar (${menorMm} mm — faixa ${recap} a ${monitorarAte} mm)`,
+    };
   }
 
-  if (menorMm <= recap && vidaRecap >= maxRecap) {
-    return { ...ACOES.troca, motivo: `Limite de recaps atingido (${vidaRecap}/${maxRecap})` };
-  }
-
-  return { ...ACOES.ok, motivo: 'Dentro dos parâmetros' };
+  return { ...ACOES.ok, motivo: `OK (sulco ${menorMm} mm > ${monitorarAte} mm)` };
 }
 
 /**

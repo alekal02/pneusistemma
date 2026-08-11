@@ -16,6 +16,7 @@ import configuracoesRouter from './src/routes/configuracoes.js';
 import dashboardRouter from './src/routes/dashboard.js';
 import webhookRouter from './src/routes/webhook.js';
 import whatsappRouter from './src/routes/whatsapp.js';
+import frotaRouter from './src/routes/frota.js';
 import { getLimites } from './src/limites.js';
 
 const app = express();
@@ -55,6 +56,7 @@ app.use('/api/configuracoes', configuracoesRouter);
 app.use('/api/dashboard', dashboardRouter);
 app.use('/api/webhook', webhookRouter);
 app.use('/api/whatsapp', whatsappRouter);
+app.use('/api/frota', frotaRouter);
 
 app.get('/api/health', (_req, res) => {
   const limites = getLimites();

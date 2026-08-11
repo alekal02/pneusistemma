@@ -12,10 +12,10 @@ router.get('/', (_req, res) => {
   res.json({
     ...limites,
     descricao: {
-      ok: `Acima de ${limites.sulco_alerta_mm} mm`,
-      alerta: `Entre ${limites.sulco_critico_mm} e ${limites.sulco_alerta_mm} mm`,
-      critico: `Abaixo ou igual a ${limites.sulco_critico_mm} mm — troca`,
-      recap: `Até ${limites.sulco_recap_mm} mm — avaliar recapagem (máx. ${limites.max_recaps}ª)`,
+      perda: `Sulco < ${limites.sulco_critico_mm} mm — perda/troca`,
+      recap: `De ${limites.sulco_critico_mm} a ${limites.sulco_recap_mm} mm — recapagem (máx. ${limites.max_recaps}ª)`,
+      monitorar: `De ${limites.sulco_recap_mm} a ${limites.sulco_alerta_mm} mm — monitorar`,
+      ok: `Acima de ${limites.sulco_alerta_mm} mm — OK`,
       novo: `Sulco típico de pneu novo: ~${limites.sulco_novo_mm} mm`,
     },
     diagnosticos: Object.values(DIAGNOSTICOS),

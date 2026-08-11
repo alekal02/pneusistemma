@@ -143,9 +143,19 @@ export const LAYOUTS_PNEU = {
 
 export const LAYOUT_PADRAO = 'truck_10';
 
-export const TIPOS_PNEU = ['direcional', 'misto'];
+export const TIPOS_PNEU = ['direcional', 'misto', 'borrachudo'];
 export const CONDICOES_PNEU = ['novo', 'recapado'];
 export const STATUS_PNEU = ['montado', 'estoque', 'recapagem', 'descarte'];
+
+export const LABELS_TIPO_PNEU = {
+  direcional: 'Direcional',
+  misto: 'Misto (tração)',
+  borrachudo: 'Borrachudo',
+};
+
+export function labelTipoPneu(codigo) {
+  return LABELS_TIPO_PNEU[codigo] || codigo || '—';
+}
 
 export function getLayout(id) {
   return LAYOUTS_PNEU[id] || LAYOUTS_PNEU[LAYOUT_PADRAO];
@@ -192,6 +202,10 @@ export function validarMontagem({ condicao, tipo_pneu, posicao }, { strictTipo =
 
   if (tipo_pneu === 'misto' && papel === 'direcional') {
     avisos.push('Pneu misto na dianteira — preferível usar direcional no eixo 1.');
+  }
+
+  if (tipo_pneu === 'borrachudo' && papel === 'direcional') {
+    avisos.push('Pneu borrachudo na dianteira — use preferencialmente em eixos de tração.');
   }
 
   return { ok: erros.length === 0, erros, avisos, papel };

@@ -15,6 +15,7 @@ import {
   STATUS_PNEU,
   getLayout,
   LAYOUT_PADRAO,
+  labelTipoPneu,
 } from '../pneus-layouts.js';
 import {
   requireAuth,
@@ -49,6 +50,9 @@ function enriquecerPneu(pneu, ultimaMedicao = null) {
     ...pneu,
     posicao_label: pneu.posicao ? labelPosicao(pneu.posicao) : null,
     papel_posicao: pneu.posicao ? papelPosicao(pneu.posicao) : null,
+    padrao: pneu.tipo_pneu,
+    padrao_label: labelTipoPneu(pneu.tipo_pneu),
+    tipo_pneu_label: labelTipoPneu(pneu.tipo_pneu),
     menor_sulco: menor,
     status_sulco: classificarSulco(menor),
     diagnostico: diagnostico.codigo,
@@ -61,6 +65,16 @@ function enriquecerPneu(pneu, ultimaMedicao = null) {
     vida_label: pneu.vida_recap > 0
       ? `${pneu.vida_recap}ª recap`
       : (pneu.condicao === 'novo' ? 'Novo' : 'Recapado'),
+    ultima_medicao: ultimaMedicao
+      ? {
+        data: ultimaMedicao.data_medicao || ultimaMedicao.ult_medicao || null,
+        sulco_externo: ultimaMedicao.sulco_externo ?? ultimaMedicao.ult_sulco_ext ?? null,
+        sulco_central: ultimaMedicao.sulco_central ?? ultimaMedicao.ult_sulco_cent ?? null,
+        sulco_interno: ultimaMedicao.sulco_interno ?? ultimaMedicao.ult_sulco_int ?? null,
+        sulco_auxiliar: ultimaMedicao.sulco_auxiliar ?? ultimaMedicao.ult_sulco_aux ?? null,
+        menor_sulco: menor,
+      }
+      : null,
   };
 }
 
@@ -76,6 +90,11 @@ function ultimaMedicaoDoPneu(db, pneuId) {
 router.get('/meta', (_req, res) => {
   res.json({
     tipos_pneu: TIPOS_PNEU,
+    tipos_pneu_labels: {
+      direcional: 'Direcional',
+      misto: 'Misto (tração)',
+      borrachudo: 'Borrachudo',
+    },
     condicoes: CONDICOES_PNEU,
     status: STATUS_PNEU,
     vidas_recap: [0, 1, 2, 3, 4, 5, 6],
@@ -215,7 +234,8 @@ router.get('/', (req, res) => {
       (SELECT sulco_externo FROM medicoes WHERE pneu_id = p.id ORDER BY data_medicao DESC, id DESC LIMIT 1) as ult_sulco_ext,
       (SELECT sulco_central FROM medicoes WHERE pneu_id = p.id ORDER BY data_medicao DESC, id DESC LIMIT 1) as ult_sulco_cent,
       (SELECT sulco_interno FROM medicoes WHERE pneu_id = p.id ORDER BY data_medicao DESC, id DESC LIMIT 1) as ult_sulco_int,
-      (SELECT sulco_auxiliar FROM medicoes WHERE pneu_id = p.id ORDER BY data_medicao DESC, id DESC LIMIT 1) as ult_sulco_aux
+      (SELECT sulco_auxiliar FROM medicoes WHERE pneu_id = p.id ORDER BY data_medicao DESC, id DESC LIMIT 1) as ult_sulco_aux,
+      (SELECT data_medicao FROM medicoes WHERE pneu_id = p.id ORDER BY data_medicao DESC, id DESC LIMIT 1) as ult_medicao
     FROM pneus p
     LEFT JOIN veiculos v ON v.id = p.veiculo_id
     WHERE ${where}
@@ -225,12 +245,17 @@ router.get('/', (req, res) => {
   `).all(...params);
 
   res.json(rows.map((p) => {
-    const ultima = {
-      sulco_externo: p.ult_sulco_ext,
-      sulco_central: p.ult_sulco_cent,
-      sulco_interno: p.ult_sulco_int,
-      sulco_auxiliar: p.ult_sulco_aux,
-    };
+    const temMedicao = p.ult_sulco_ext != null || p.ult_sulco_cent != null
+      || p.ult_sulco_int != null || p.ult_sulco_aux != null || p.ult_medicao;
+    const ultima = temMedicao
+      ? {
+        data_medicao: p.ult_medicao,
+        sulco_externo: p.ult_sulco_ext,
+        sulco_central: p.ult_sulco_cent,
+        sulco_interno: p.ult_sulco_int,
+        sulco_auxiliar: p.ult_sulco_aux,
+      }
+      : null;
     return enriquecerPneu(p, ultima);
   }));
 });
@@ -251,6 +276,12 @@ router.post('/', (req, res) => {
   const db = getDb();
   const tipo = tipo_pneu || 'misto';
   const cond = condicao || 'novo';
+  if (!TIPOS_PNEU.includes(tipo)) {
+    return res.status(400).json({ erro: `Padrão inválido. Use: ${TIPOS_PNEU.join(', ')}` });
+  }
+  if (!CONDICOES_PNEU.includes(cond)) {
+    return res.status(400).json({ erro: `Condição inválida. Use: ${CONDICOES_PNEU.join(', ')}` });
+  }
   const vida = vida_recap != null ? parseInt(vida_recap, 10) : 0;
 
   try {
@@ -318,37 +349,38 @@ router.get('/:id', (req, res) => {
   `).all(req.params.id);
 
   const ultima = medicoes[0] || null;
+  const padraoLabel = labelTipoPneu(pneu.tipo_pneu);
   res.json({
     ...enriquecerPneu(pneu, ultima),
     medicoes: medicoesComStatus,
-    movimentacoes,
+    movimentacoes: movimentacoes.map((m) => ({
+      ...m,
+      padrao: pneu.tipo_pneu,
+      padrao_label: padraoLabel,
+      condicao: pneu.condicao,
+    })),
   });
 });
 
 router.put('/:id', (req, res) => {
   const {
     marca, modelo, medida, dot, numero_fogo,
-    tipo_pneu, condicao, vida_recap, sulco_inicial_mm,
+    vida_recap, sulco_inicial_mm,
     data_instalacao, km_instalacao, observacoes,
   } = req.body;
 
   const atual = assertPneuDaFilial(req.params.id, filialScopeId(req));
   if (!atual) return res.status(404).json({ erro: 'Pneu não encontrado' });
 
-  const novaCondicao = condicao || atual.condicao;
-  const novoTipo = tipo_pneu || atual.tipo_pneu;
-  const fogo = numero_fogo != null ? String(numero_fogo).trim() : atual.numero_fogo;
-
-  if (atual.posicao) {
-    const validacao = validarMontagem({
-      condicao: novaCondicao,
-      tipo_pneu: novoTipo,
-      posicao: atual.posicao,
-    });
-    if (!validacao.ok) {
-      return res.status(400).json({ erro: validacao.erros.join(' '), avisos: validacao.avisos });
-    }
+  // Padrão (tipo) e condição são imutáveis após o cadastro
+  if (req.body.tipo_pneu != null && req.body.tipo_pneu !== atual.tipo_pneu) {
+    return res.status(400).json({ erro: 'Padrão do pneu não pode ser alterado após o cadastro' });
   }
+  if (req.body.condicao != null && req.body.condicao !== atual.condicao) {
+    return res.status(400).json({ erro: 'Condição do pneu não pode ser alterada (use Registrar recap)' });
+  }
+
+  const fogo = numero_fogo != null ? String(numero_fogo).trim() : atual.numero_fogo;
 
   const db = getDb();
   try {
@@ -359,8 +391,6 @@ router.put('/:id', (req, res) => {
         medida = ?,
         dot = ?,
         numero_fogo = ?,
-        tipo_pneu = ?,
-        condicao = ?,
         vida_recap = COALESCE(?, vida_recap),
         sulco_inicial_mm = COALESCE(?, sulco_inicial_mm),
         data_instalacao = COALESCE(?, data_instalacao),
@@ -373,8 +403,6 @@ router.put('/:id', (req, res) => {
       medida?.trim() || null,
       dot?.trim() || null,
       fogo || null,
-      novoTipo,
-      novaCondicao,
       vida_recap != null ? parseInt(vida_recap, 10) : null,
       sulco_inicial_mm != null ? parseFloat(sulco_inicial_mm) : null,
       data_instalacao || null,

@@ -188,6 +188,18 @@ export const PNEU_TEMPLATE_ROWS = [
     sulco_inicial_mm: '14',
     observacoes: '',
   },
+  {
+    numero_fogo: 'F-3003',
+    tipo_pneu: 'borrachudo',
+    condicao: 'novo',
+    vida_recap: '0',
+    marca: 'Pirelli',
+    modelo: '',
+    medida: '275/80R22.5',
+    dot: '',
+    sulco_inicial_mm: '18',
+    observacoes: 'Tração',
+  },
 ];
 
 /** Corrige typo no template de exemplo */
@@ -222,10 +234,14 @@ export function mapLayoutId(raw, tipo) {
 }
 
 export function mapTipoPneu(raw) {
-  const v = String(raw || '').trim().toLowerCase();
+  const v = String(raw || '').trim().toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
   if (v.startsWith('dir')) return 'direcional';
-  if (v.startsWith('mis') || v === 'tracao' || v === 'tração') return 'misto';
-  return v === 'direcional' ? 'direcional' : 'misto';
+  if (v.startsWith('borr') || v.includes('borracha')) return 'borrachudo';
+  if (v.startsWith('mis') || v === 'tracao' || v.includes('tracao')) return 'misto';
+  if (v === 'direcional' || v === 'misto' || v === 'borrachudo') return v;
+  return 'misto';
 }
 
 export function mapCondicao(raw) {
@@ -233,3 +249,112 @@ export function mapCondicao(raw) {
   if (v.startsWith('rec')) return 'recapado';
   return 'novo';
 }
+
+/** Planilha única: frota (veículos + pneus montados + estoque) */
+export const FROTA_TEMPLATE_HEADERS = [
+  'status',
+  'placa',
+  'apelido',
+  'tipo_veiculo',
+  'layout_pneus',
+  'km_atual',
+  'hr_atual',
+  'posicao',
+  'numero_fogo',
+  'tipo_pneu',
+  'condicao',
+  'vida_recap',
+  'marca',
+  'medida',
+  'dot',
+  'sulco_inicial_mm',
+  'observacoes',
+];
+
+export const FROTA_TEMPLATE_ROWS = [
+  {
+    status: 'montado',
+    placa: 'ABC1D23',
+    apelido: 'Compactador 01',
+    tipo_veiculo: 'Truck / Tração',
+    layout_pneus: 'truck_10',
+    km_atual: '10000',
+    hr_atual: '200',
+    posicao: '1E',
+    numero_fogo: 'F-1001',
+    tipo_pneu: 'direcional',
+    condicao: 'novo',
+    vida_recap: '0',
+    marca: 'Michelin',
+    medida: '275/80R22.5',
+    dot: '1224',
+    sulco_inicial_mm: '16',
+    observacoes: 'Já em uso no caminhão',
+  },
+  {
+    status: 'montado',
+    placa: 'ABC1D23',
+    apelido: 'Compactador 01',
+    tipo_veiculo: 'Truck / Tração',
+    layout_pneus: 'truck_10',
+    km_atual: '10000',
+    hr_atual: '200',
+    posicao: '1D',
+    numero_fogo: 'F-1002',
+    tipo_pneu: 'direcional',
+    condicao: 'novo',
+    vida_recap: '0',
+    marca: 'Michelin',
+    medida: '275/80R22.5',
+    dot: '1224',
+    sulco_inicial_mm: '15',
+    observacoes: '',
+  },
+  {
+    status: 'montado',
+    placa: 'ABC1D23',
+    apelido: 'Compactador 01',
+    tipo_veiculo: 'Truck / Tração',
+    layout_pneus: 'truck_10',
+    km_atual: '10000',
+    hr_atual: '200',
+    posicao: '2EE',
+    numero_fogo: 'F-2001',
+    tipo_pneu: 'misto',
+    condicao: 'recapado',
+    vida_recap: '1',
+    marca: 'Goodyear',
+    medida: '275/80R22.5',
+    dot: '',
+    sulco_inicial_mm: '14',
+    observacoes: '',
+  },
+  {
+    status: 'estoque',
+    placa: '',
+    apelido: '',
+    tipo_veiculo: '',
+    layout_pneus: '',
+    km_atual: '',
+    hr_atual: '',
+    posicao: '',
+    numero_fogo: 'F-9001',
+    tipo_pneu: 'borrachudo',
+    condicao: 'novo',
+    vida_recap: '0',
+    marca: 'Pirelli',
+    medida: '275/80R22.5',
+    dot: '0325',
+    sulco_inicial_mm: '17',
+    observacoes: 'Pneu parado no estoque',
+  },
+];
+
+export function mapStatusPneu(raw, { placa, posicao } = {}) {
+  const v = String(raw || '').trim().toLowerCase();
+  if (v.startsWith('mont') || v === 'uso' || v === 'em_uso') return 'montado';
+  if (v.startsWith('est') || v === 'parado') return 'estoque';
+  if (placa && posicao) return 'montado';
+  return 'estoque';
+}
+

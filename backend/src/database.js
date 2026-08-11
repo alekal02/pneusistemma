@@ -140,6 +140,24 @@ insertConfig.run('sulco_novo_mm', '14');
 insertConfig.run('max_recaps', '6');
 insertConfig.run('diagnostico_tolerancia_mm', '1');
 
+// Migração única: perda ≤3 · recap ≤5 · monitorar ≤8 · OK >8
+const migrouFaixas = db.prepare(`SELECT valor FROM configuracoes WHERE chave = ?`)
+  .get('limites_faixas_v2');
+if (!migrouFaixas) {
+  const upsertConfig = db.prepare(`
+    INSERT INTO configuracoes (chave, valor, updated_at)
+    VALUES (?, ?, datetime('now', 'localtime'))
+    ON CONFLICT(chave) DO UPDATE SET
+      valor = excluded.valor,
+      updated_at = excluded.updated_at
+  `);
+  upsertConfig.run('sulco_critico_mm', '3');
+  upsertConfig.run('sulco_recap_mm', '5');
+  upsertConfig.run('sulco_alerta_mm', '8');
+  upsertConfig.run('limites_faixas_v2', '1');
+  console.log('[migrate] Limites: perda ≤3 · recap ≤5 · monitorar ≤8 · OK >8');
+}
+
 function ensureColumn(table, column, ddl) {
   try {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);

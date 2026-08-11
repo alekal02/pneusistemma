@@ -27,8 +27,8 @@ const LAYOUT_POR_TIPO = {
 let veiculosCache = [];
 let tireMarker = null;
 let limitesAtuais = {
-  sulco_critico_mm: 1.6,
-  sulco_alerta_mm: 3.0,
+  sulco_critico_mm: 3.0,
+  sulco_alerta_mm: 8.0,
   sulco_recap_mm: 5.0,
   sulco_novo_mm: 14.0,
   max_recaps: 6,
@@ -157,22 +157,22 @@ function numOrNull(id) {
 
 function atualizarPreviewLimites() {
   const critico = parseFloat(document.getElementById('cfg-critico')?.value) || limitesAtuais.sulco_critico_mm;
-  const alerta = parseFloat(document.getElementById('cfg-alerta')?.value) || limitesAtuais.sulco_alerta_mm;
   const recap = parseFloat(document.getElementById('cfg-recap')?.value) || limitesAtuais.sulco_recap_mm;
+  const monitorar = parseFloat(document.getElementById('cfg-alerta')?.value) || limitesAtuais.sulco_alerta_mm;
 
   const elCritico = document.getElementById('preview-critico');
-  const elAlerta = document.getElementById('preview-alerta');
   const elRecap = document.getElementById('preview-recap');
+  const elAlerta = document.getElementById('preview-alerta');
   const elOk = document.getElementById('preview-ok');
-  if (elCritico) elCritico.textContent = `≤ ${critico} mm`;
-  if (elAlerta) elAlerta.textContent = `${critico} – ${alerta} mm`;
-  if (elRecap) elRecap.textContent = `até ${recap} mm`;
-  if (elOk) elOk.textContent = `> ${Math.max(alerta, recap)} mm`;
+  if (elCritico) elCritico.textContent = `< ${critico} mm`;
+  if (elRecap) elRecap.textContent = `${critico} – ${recap} mm`;
+  if (elAlerta) elAlerta.textContent = `${recap} – ${monitorar} mm`;
+  if (elOk) elOk.textContent = `> ${monitorar} mm`;
 }
 
 function hintLimites() {
   const { sulco_critico_mm: c, sulco_alerta_mm: a, sulco_recap_mm: r } = limitesAtuais;
-  return `Crítico/Troca ≤ ${c} mm · Alerta ≤ ${a} mm · Recap ≤ ${r} mm · OK acima`;
+  return `Perda < ${c} mm · Recap ${c}–${r} mm · Monitorar ${r}–${a} mm · OK > ${a} mm`;
 }
 
 function showView(name) {
@@ -252,7 +252,15 @@ document.querySelectorAll('.tab').forEach((tab) => {
     if (view === 'medicao') initMedicao();
     if (view === 'alertas') loadAlertas();
     if (view === 'acoes') loadAcoes();
-    if (view === 'configuracoes') loadConfiguracoes();
+    if (view === 'configuracoes') {
+      if (!isAdmin()) {
+        toast('Limites são definidos pelo administrador', 'error');
+        showView('dashboard');
+        loadDashboard();
+        return;
+      }
+      loadConfiguracoes();
+    }
     if (view === 'filiais') loadFiliais();
     if (view === 'whatsapp') loadWhatsApp();
   });
@@ -502,6 +510,30 @@ async function openVeiculoDetalhe(id, origem = 'dashboard', dadosPreload = null)
   }
 }
 
+function labelPadraoPneu(codigo) {
+  const map = {
+    direcional: 'Direcional',
+    misto: 'Misto (tração)',
+    borrachudo: 'Borrachudo',
+  };
+  return map[codigo] || codigo || '—';
+}
+
+function formatUltimaMedicaoSulco(pneu) {
+  const u = pneu.ultima_medicao;
+  const menor = pneu.menor_sulco ?? u?.menor_sulco;
+  const data = u?.data || pneu.ult_medicao;
+  if (menor == null && !data) return 'Sem medição';
+  const pts = [
+    u?.sulco_externo ?? pneu.ult_sulco_ext,
+    u?.sulco_central ?? pneu.ult_sulco_cent,
+    u?.sulco_interno ?? pneu.ult_sulco_int,
+    u?.sulco_auxiliar ?? pneu.ult_sulco_aux,
+  ].map((v) => (v != null ? `${v}` : '—')).join(' · ');
+  const dataTxt = data ? formatDate(data) : '—';
+  return `${menor != null ? `${menor} mm` : '—'} (${pts}) · ${dataTxt}`;
+}
+
 function atualizarResumoPneuTruck(pneu) {
   const partes = [];
   if (pneu.numero_fogo) partes.push(`Fogo ${pneu.numero_fogo}`);
@@ -509,22 +541,14 @@ function atualizarResumoPneuTruck(pneu) {
   if (pneu.dot) partes.push(`DOT ${pneu.dot}`);
   document.getElementById('truck-pneu-resumo').textContent = partes.length
     ? partes.join(' · ')
-    : 'Altere o tipo ou a condição abaixo, se necessário.';
+    : 'Pneu montado nesta posição';
 
-  const papel = pneu.papel_posicao || meta?.papeis?.[pneu.posicao];
-  const hint = document.getElementById('truck-pneu-tipo-hint');
-  if (!hint) return;
-  if (papel === 'direcional' && pneu.tipo_pneu === 'misto') {
-    hint.textContent = 'Posição dianteira: o ideal é pneu direcional.';
-  } else if (papel === 'tracao' && pneu.tipo_pneu === 'direcional') {
-    hint.textContent = 'Eixo de tração: costuma-se usar pneu misto.';
-  } else if (papel === 'direcional' && pneu.condicao === 'recapado') {
-    hint.textContent = 'Atenção: recapado na dianteira não é recomendado.';
-  } else {
-    hint.textContent = papel === 'direcional'
-      ? 'Posição dianteira (direcional).'
-      : 'Posição de tração — pode usar misto ou direcional.';
-  }
+  const elPadrao = document.getElementById('truck-pneu-padrao');
+  const elCond = document.getElementById('truck-pneu-condicao-label');
+  const elSulco = document.getElementById('truck-pneu-ultima-sulco');
+  if (elPadrao) elPadrao.textContent = pneu.padrao_label || labelPadraoPneu(pneu.tipo_pneu);
+  if (elCond) elCond.textContent = pneu.vida_label || (pneu.condicao === 'recapado' ? 'Recapado' : 'Novo');
+  if (elSulco) elSulco.textContent = formatUltimaMedicaoSulco(pneu);
 }
 
 function aplicarVisibilidadeAcessoRapido() {
@@ -571,11 +595,6 @@ function selecionarPneuTruck(pneu) {
     : '';
 
   atualizarResumoPneuTruck(pneu);
-
-  const selTipo = document.getElementById('truck-pneu-tipo');
-  const selCond = document.getElementById('truck-pneu-condicao');
-  if (selTipo) selTipo.value = pneu.tipo_pneu === 'direcional' ? 'direcional' : 'misto';
-  if (selCond) selCond.value = pneu.condicao === 'recapado' ? 'recapado' : 'novo';
 
   document.getElementById('truck-sulco-ext').value = pneu.ult_sulco_ext ?? '';
   document.getElementById('truck-sulco-cent').value = pneu.ult_sulco_cent ?? '';
@@ -632,65 +651,6 @@ function selecionarPneuTruck(pneu) {
   aplicarVisibilidadeAcessoRapido();
 }
 
-async function salvarTipoPneuTruck() {
-  if (!pneuSelecionado?.id) return;
-  const tipo_pneu = document.getElementById('truck-pneu-tipo')?.value || 'misto';
-  const condicao = document.getElementById('truck-pneu-condicao')?.value || 'novo';
-
-  if (tipo_pneu === pneuSelecionado.tipo_pneu && condicao === pneuSelecionado.condicao) {
-    atualizarResumoPneuTruck(pneuSelecionado);
-    return;
-  }
-
-  try {
-    const result = await fetchJSON(`${API}/pneus/${pneuSelecionado.id}`, {
-      method: 'PUT',
-      body: JSON.stringify({
-        marca: pneuSelecionado.marca,
-        modelo: pneuSelecionado.modelo,
-        medida: pneuSelecionado.medida,
-        dot: pneuSelecionado.dot,
-        numero_fogo: pneuSelecionado.numero_fogo,
-        tipo_pneu,
-        condicao,
-        vida_recap: pneuSelecionado.vida_recap,
-        sulco_inicial_mm: pneuSelecionado.sulco_inicial_mm,
-        observacoes: pneuSelecionado.observacoes,
-      }),
-    });
-
-    const atualizado = result.pneu || {};
-    pneuSelecionado = {
-      ...pneuSelecionado,
-      ...atualizado,
-      tipo_pneu,
-      condicao,
-      vida_label: atualizado.vida_label
-        || (condicao === 'recapado'
-          ? `${pneuSelecionado.vida_recap || 1}ª recap`
-          : 'Novo'),
-    };
-
-    if (veiculoAtual?.pneus) {
-      const idx = veiculoAtual.pneus.findIndex((p) => p.id === pneuSelecionado.id);
-      if (idx >= 0) veiculoAtual.pneus[idx] = { ...veiculoAtual.pneus[idx], ...pneuSelecionado };
-    }
-
-    document.getElementById('truck-pneu-vida').innerHTML = pneuSelecionado.vida_label
-      ? `<span class="badge badge-vida">${pneuSelecionado.vida_label}</span>`
-      : '';
-    atualizarResumoPneuTruck(pneuSelecionado);
-    toast(result.mensagem || 'Tipo do pneu atualizado', 'success');
-  } catch (err) {
-    // reverte selects
-    const selTipo = document.getElementById('truck-pneu-tipo');
-    const selCond = document.getElementById('truck-pneu-condicao');
-    if (selTipo) selTipo.value = pneuSelecionado.tipo_pneu === 'direcional' ? 'direcional' : 'misto';
-    if (selCond) selCond.value = pneuSelecionado.condicao === 'recapado' ? 'recapado' : 'novo';
-    toast(err.message, 'error');
-  }
-}
-
 async function selecionarSlotVazio(posicao) {
   if (modoAcessoRapido) {
     toast('Montagem de pneus não está disponível no acesso rápido. Use o sistema completo.', 'error');
@@ -725,7 +685,7 @@ async function carregarSelectEstoque() {
         p.numero_fogo ? `Fogo ${p.numero_fogo}` : `#${p.id}`,
         p.marca,
         p.condicao === 'recapado' ? (p.vida_label || 'Recap') : 'Novo',
-        p.tipo_pneu,
+        p.padrao_label || labelPadraoPneu(p.tipo_pneu),
       ].filter(Boolean).join(' · ');
       return `<option value="${p.id}">${label}</option>`;
     }).join('');
@@ -839,6 +799,14 @@ async function salvarMedicaoTruck() {
       acao_sugerida: result.acao_sugerida,
       acao_label: result.acao_label,
       acao_motivo: result.acao_motivo,
+      ultima_medicao: {
+        data: new Date().toISOString().split('T')[0],
+        sulco_externo: pontos.externo,
+        sulco_central: pontos.central,
+        sulco_interno: pontos.interno,
+        sulco_auxiliar: pontos.auxiliar,
+        menor_sulco: result.menor_sulco,
+      },
     };
 
     const idx = veiculoAtual.pneus.findIndex((p) => p.id === pneuSelecionado.id);
@@ -849,6 +817,7 @@ async function salvarMedicaoTruck() {
     document.getElementById('truck-pneu-acao').innerHTML = badgeAcao(result.acao_sugerida, result.acao_label);
     document.getElementById('truck-diagnostico').textContent =
       `${result.diagnostico_label} · ${result.acao_motivo}`;
+    atualizarResumoPneuTruck(pneuSelecionado);
     atualizarPerfilLocal('truck-perfil', pontos, {
       label: result.diagnostico_label,
       desc: result.acao_motivo,
@@ -903,8 +872,6 @@ async function registrarEventoPneu(tipo) {
   });
 
 document.getElementById('btn-truck-montar')?.addEventListener('click', montarPneuDoEstoque);
-document.getElementById('truck-pneu-tipo')?.addEventListener('change', salvarTipoPneuTruck);
-document.getElementById('truck-pneu-condicao')?.addEventListener('change', salvarTipoPneuTruck);
 document.getElementById('link-ir-pneus')?.addEventListener('click', (e) => {
   e.preventDefault();
   showView('pneus');
@@ -938,8 +905,9 @@ async function loadPneus() {
           <div class="pneu-card-main">
             <h3>Fogo ${p.numero_fogo || '—'}</h3>
             <p class="hint">${[p.marca, p.dot ? `DOT ${p.dot}` : null, p.vida_label].filter(Boolean).join(' · ')}</p>
-            <p class="hint">${onde} · ${p.tipo_pneu || 'misto'}
-              ${p.menor_sulco != null ? ` · ${p.menor_sulco} mm` : ''}</p>
+            <p class="hint">${onde} · ${p.padrao_label || labelPadraoPneu(p.tipo_pneu)}
+              ${p.menor_sulco != null ? ` · sulco ${p.menor_sulco} mm` : ' · sem medição'}
+              ${p.ultima_medicao?.data ? ` · ${formatDate(p.ultima_medicao.data)}` : ''}</p>
           </div>
           <div class="pneu-card-actions">
             ${badge(p.status_sulco)}
@@ -984,6 +952,25 @@ async function loadPneus() {
   }
 }
 
+function setTipoCondicaoEditaveis(editavel) {
+  const tipo = document.getElementById('pneu-tipo');
+  const cond = document.getElementById('pneu-condicao');
+  if (tipo) tipo.disabled = !editavel;
+  if (cond) cond.disabled = !editavel;
+  const hintTipo = document.getElementById('pneu-tipo-hint');
+  const hintCond = document.getElementById('pneu-condicao-hint');
+  if (hintTipo) {
+    hintTipo.textContent = editavel
+      ? 'Definido no cadastro — não pode ser alterado depois'
+      : 'Padrão fixo (não pode alterar)';
+  }
+  if (hintCond) {
+    hintCond.textContent = editavel
+      ? 'Só muda ao registrar recap'
+      : 'Condição fixa — use Registrar recap';
+  }
+}
+
 function abrirModalPneuNovo() {
   document.getElementById('modal-pneu-titulo').textContent = 'Novo pneu no estoque';
   document.getElementById('pneu-edit-id').value = '';
@@ -991,6 +978,7 @@ function abrirModalPneuNovo() {
   document.getElementById('pneu-tipo').value = 'misto';
   document.getElementById('pneu-condicao').value = 'novo';
   document.getElementById('pneu-vida').value = '0';
+  setTipoCondicaoEditaveis(true);
   document.getElementById('modal-pneu').showModal();
 }
 
@@ -1006,6 +994,7 @@ async function abrirModalPneu(id) {
     document.getElementById('pneu-condicao').value = p.condicao || 'novo';
     document.getElementById('pneu-vida').value = String(p.vida_recap ?? 0);
     document.getElementById('pneu-sulco-inicial').value = p.sulco_inicial_mm ?? '';
+    setTipoCondicaoEditaveis(false);
     document.getElementById('modal-pneu').showModal();
   } catch (err) {
     toast(err.message, 'error');
@@ -1030,11 +1019,13 @@ document.getElementById('form-pneu')?.addEventListener('submit', async (e) => {
     numero_fogo: document.getElementById('pneu-fogo').value,
     dot: document.getElementById('pneu-dot').value,
     marca: document.getElementById('pneu-marca').value,
-    tipo_pneu: document.getElementById('pneu-tipo').value,
-    condicao: document.getElementById('pneu-condicao').value,
     vida_recap: parseInt(document.getElementById('pneu-vida').value, 10),
     sulco_inicial_mm: numOrNull('pneu-sulco-inicial'),
   };
+  if (!id) {
+    payload.tipo_pneu = document.getElementById('pneu-tipo').value;
+    payload.condicao = document.getElementById('pneu-condicao').value;
+  }
   try {
     if (id) {
       await fetchJSON(`${API}/pneus/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
@@ -1164,7 +1155,7 @@ async function abrirHistoricoPneu(pneuId) {
       : document.getElementById('historico-pneu');
     if (viewPneus && el) el.classList.remove('hidden');
 
-    const titulo = `Histórico — ${data.numero_fogo ? `Fogo ${data.numero_fogo}` : `#${data.id}`}${data.posicao ? ` · ${meta.posicoes[data.posicao] || data.posicao}` : ' · estoque'}`;
+    const titulo = `Histórico — ${data.numero_fogo ? `Fogo ${data.numero_fogo}` : `#${data.id}`}${data.posicao ? ` · ${meta.posicoes[data.posicao] || data.posicao}` : ' · estoque'}${data.padrao_label || data.tipo_pneu ? ` · ${data.padrao_label || labelPadraoPneu(data.tipo_pneu)}` : ''}`;
 
     if (!data.medicoes.length && !data.movimentacoes?.length) {
       el.innerHTML = `<div class="card"><h3>${titulo}</h3><p class="hint">Nenhuma medição ou movimentação registrada.</p></div>`;
@@ -1202,12 +1193,13 @@ async function abrirHistoricoPneu(pneuId) {
       ${data.movimentacoes?.length ? `
         <h4 style="margin-top:1rem">Movimentações</h4>
         <table class="historico-table">
-          <thead><tr><th>Data</th><th>Tipo</th><th>Sulco</th><th>KM</th><th>Detalhes</th></tr></thead>
+          <thead><tr><th>Data</th><th>Tipo</th><th>Padrão</th><th>Sulco</th><th>KM</th><th>Detalhes</th></tr></thead>
           <tbody>
             ${data.movimentacoes.map((m) => `
               <tr>
                 <td>${formatDate(m.data_evento)}</td>
                 <td>${m.tipo}</td>
+                <td>${m.padrao_label || labelPadraoPneu(m.padrao || data.tipo_pneu)}</td>
                 <td>${m.sulco_mm ?? '-'}</td>
                 <td>${m.km_veiculo?.toLocaleString('pt-BR') || '-'}</td>
                 <td>${m.detalhes || '-'}</td>
@@ -1332,17 +1324,27 @@ function mostrarResultadoImport(elId, result) {
   const el = document.getElementById(elId);
   if (!el) return;
   const erros = result.erros || [];
+  const avisos = result.avisos || [];
   el.classList.remove('hidden');
   el.innerHTML = `
     <strong>${result.mensagem || 'Importação concluída'}</strong>
     <p class="hint" style="margin:.35rem 0 0">
-      Inseridos: <strong>${result.inseridos ?? 0}</strong>
-      ${erros.length ? ` · Com erro: <strong>${erros.length}</strong>` : ''}
+      ${result.veiculos != null ? `Veículos: <strong>${result.veiculos}</strong> · ` : ''}
+      ${result.pneus_montados != null ? `Montados: <strong>${result.pneus_montados}</strong> · ` : ''}
+      ${result.pneus_estoque != null ? `Estoque: <strong>${result.pneus_estoque}</strong> · ` : ''}
+      ${result.inseridos != null ? `Inseridos: <strong>${result.inseridos}</strong>` : ''}
+      ${erros.length ? ` · Erros: <strong>${erros.length}</strong>` : ''}
+      ${avisos.length ? ` · Avisos: <strong>${avisos.length}</strong>` : ''}
     </p>
     ${erros.length
       ? `<ul class="import-erros">${erros.slice(0, 12).map((e) =>
           `<li>Linha ${e.linha}${e.placa || e.numero_fogo ? ` (${e.placa || e.numero_fogo})` : ''}: ${e.erro}</li>`
         ).join('')}${erros.length > 12 ? `<li>… e mais ${erros.length - 12}</li>` : ''}</ul>`
+      : ''}
+    ${avisos.length
+      ? `<ul class="import-avisos">${avisos.slice(0, 8).map((a) =>
+          `<li>Linha ${a.linha}${a.numero_fogo ? ` (${a.numero_fogo})` : ''}: ${a.aviso}</li>`
+        ).join('')}</ul>`
       : ''}
   `;
 }
@@ -1376,6 +1378,18 @@ document.getElementById('file-import-veiculos')?.addEventListener('change', asyn
   const file = e.target.files?.[0];
   e.target.value = '';
   await importarCsvArquivo(file, `${API}/veiculos/import`, 'import-resultado-veiculos', () => loadVeiculos());
+});
+
+document.getElementById('btn-modelo-frota')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  baixarModeloCsv(`${API}/frota/import/modelo`, 'modelo-carga-frota.csv');
+});
+document.getElementById('file-import-frota')?.addEventListener('change', async (e) => {
+  const file = e.target.files?.[0];
+  e.target.value = '';
+  await importarCsvArquivo(file, `${API}/frota/import`, 'import-resultado-frota', () => {
+    loadVeiculos();
+  });
 });
 
 document.getElementById('btn-modelo-pneus')?.addEventListener('click', (e) => {
@@ -1694,6 +1708,7 @@ async function loadAcoes() {
 // ── Configurações ──────────────────────────────────────
 
 async function loadConfiguracoes() {
+  if (!isAdmin()) return;
   try {
     const config = await fetchConfiguracoes();
     limitesAtuais = { ...limitesAtuais, ...config };

@@ -11,9 +11,9 @@ const CHAVES = {
 };
 
 const PADROES = {
-  [CHAVES.CRITICO]: config.sulcoMinimo,
-  [CHAVES.ALERTA]: config.sulcoAlerta,
-  [CHAVES.RECAP]: 5.0,
+  [CHAVES.CRITICO]: config.sulcoMinimo, // perda/troca: ≤ 3 mm
+  [CHAVES.RECAP]: 5.0,                  // recap: > crítico e ≤ 5 mm
+  [CHAVES.ALERTA]: config.sulcoAlerta,  // monitorar: > recap e ≤ 8 mm
   [CHAVES.NOVO]: 14.0,
   [CHAVES.MAX_RECAPS]: 6,
   [CHAVES.TOLERANCIA]: 1.0,
@@ -60,14 +60,15 @@ export function setLimites(body) {
     ? parseFloat(body.diagnostico_tolerancia_mm)
     : atual.diagnostico_tolerancia_mm;
 
-  if (!Number.isFinite(critico) || critico < 0) throw new Error('Limite crítico inválido');
-  if (!Number.isFinite(alerta) || alerta < 0) throw new Error('Limite de alerta inválido');
-  if (alerta <= critico) throw new Error('O limite de alerta deve ser maior que o limite crítico');
-  if (!Number.isFinite(recap) || recap <= alerta) {
-    throw new Error('O limiar de recapagem deve ser maior que o alerta');
+  if (!Number.isFinite(critico) || critico < 0) throw new Error('Limite de perda/troca inválido');
+  if (!Number.isFinite(recap) || recap <= critico) {
+    throw new Error('O limiar de recapagem deve ser maior que o de perda (<3 → troca)');
   }
-  if (!Number.isFinite(novo) || novo <= recap) {
-    throw new Error('O sulco de pneu novo deve ser maior que o limiar de recapagem');
+  if (!Number.isFinite(alerta) || alerta <= recap) {
+    throw new Error('O limiar de monitorar deve ser maior que o de recapagem');
+  }
+  if (!Number.isFinite(novo) || novo <= alerta) {
+    throw new Error('O sulco de pneu novo deve ser maior que o limiar de OK/monitorar');
   }
   if (!Number.isFinite(maxRecaps) || maxRecaps < 0 || maxRecaps > 10) {
     throw new Error('Máximo de recaps inválido (0–10)');
@@ -89,7 +90,7 @@ export function setLimites(body) {
 export function classificarSulco(mm) {
   if (mm === null || mm === undefined) return 'sem_dado';
   const { sulco_critico_mm, sulco_alerta_mm } = getLimites();
-  if (mm <= sulco_critico_mm) return 'critico';
+  if (mm < sulco_critico_mm) return 'critico';
   if (mm <= sulco_alerta_mm) return 'alerta';
   return 'ok';
 }

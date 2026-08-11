@@ -178,11 +178,26 @@ body {
   border: 1px solid var(--brand-mist);
   border-radius: var(--radius-sm);
 }
-.import-erros {
+.import-avisos {
   margin: .5rem 0 0;
   padding-left: 1.1rem;
   font-size: .82rem;
-  color: #9a3412;
+  color: #92400e;
+}
+.carga-frota-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+  padding: 1.1rem 1.25rem;
+  border-left: 4px solid var(--brand);
+}
+.carga-frota-banner h3 {
+  font-family: var(--font-display);
+  margin: 0 0 .35rem;
+  font-size: 1.05rem;
 }
 
 h2 {
@@ -1023,12 +1038,31 @@ h3 {
   border-radius: 8px;
   border: 1px solid #e2e8f0;
 }
-.pneu-tipo-row {
-  margin-bottom: .35rem;
+.pneu-info-fixa {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: .55rem .85rem;
+  margin: 0 0 .9rem;
+  padding: .65rem .75rem;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
 }
-#truck-pneu-tipo-hint {
-  margin: 0 0 .85rem;
-  font-size: .78rem;
+.pneu-info-fixa .label {
+  display: block;
+  font-size: .72rem;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+  color: #64748b;
+  margin-bottom: .15rem;
+}
+.pneu-info-fixa strong {
+  font-size: .9rem;
+  color: #0f172a;
+  font-weight: 600;
+}
+.pneu-info-fixa .span-2 {
+  grid-column: 1 / -1;
 }
 .truck-montar-box {
   margin-top: .75rem;
