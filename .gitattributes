@@ -1,0 +1,8 @@
+# Garante UTF-8 em arquivos de texto do projeto
+* text=auto eol=lf
+*.js text eol=lf charset=utf-8
+*.html text eol=lf charset=utf-8
+*.css text eol=lf charset=utf-8
+*.svg text eol=lf charset=utf-8
+*.json text eol=lf charset=utf-8
+*.md text eol=lf charset=utf-8

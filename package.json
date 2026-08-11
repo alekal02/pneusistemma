@@ -1,0 +1,17 @@
+{
+  "name": "pneu-controle",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Controle de desgaste de pneus - monorepo front + back",
+  "scripts": {
+    "install:all": "npm install --prefix backend && npm install --prefix frontend",
+    "dev": "concurrently -n api,web -c blue,green \"npm run dev --prefix backend\" \"npm run dev --prefix frontend\"",
+    "dev:api": "npm run dev --prefix backend",
+    "dev:web": "npm run dev --prefix frontend",
+    "build": "npm run build --prefix frontend",
+    "start": "npm run start --prefix backend"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

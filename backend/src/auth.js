@@ -1,0 +1,112 @@
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
+import { config } from './config.js';
+import { getDb } from './database.js';
+
+export function hashSenha(senha) {
+  return bcrypt.hashSync(senha, 10);
+}
+
+export function verificarSenha(senha, hash) {
+  return bcrypt.compareSync(senha, hash);
+}
+
+export function emitirToken(usuario) {
+  return jwt.sign(
+    {
+      sub: usuario.id,
+      login: usuario.login,
+      papel: usuario.papel,
+      filial_id: usuario.filial_id ?? null,
+    },
+    config.jwtSecret,
+    { expiresIn: config.jwtExpiresIn }
+  );
+}
+
+export function usuarioPublico(row, filial = null) {
+  return {
+    id: row.id,
+    login: row.login,
+    papel: row.papel,
+    filial_id: row.filial_id ?? null,
+    filial: filial
+      ? { id: filial.id, nome: filial.nome, codigo: filial.codigo }
+      : null,
+  };
+}
+
+export function carregarUsuario(id) {
+  const db = getDb();
+  const row = db.prepare(`
+    SELECT u.*, f.nome as filial_nome, f.codigo as filial_codigo
+    FROM usuarios u
+    LEFT JOIN filiais f ON f.id = u.filial_id
+    WHERE u.id = ? AND u.ativo = 1
+  `).get(id);
+  if (!row) return null;
+  return {
+    ...row,
+    filial: row.filial_id
+      ? { id: row.filial_id, nome: row.filial_nome, codigo: row.filial_codigo }
+      : null,
+  };
+}
+
+export function requireAuth(req, res, next) {
+  const header = req.headers.authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+  if (!token) {
+    return res.status(401).json({ erro: 'Não autenticado' });
+  }
+  try {
+    const payload = jwt.verify(token, config.jwtSecret);
+    const user = carregarUsuario(payload.sub);
+    if (!user) return res.status(401).json({ erro: 'Usuário inválido ou inativo' });
+    req.user = user;
+    next();
+  } catch {
+    return res.status(401).json({ erro: 'Sessão expirada ou inválida' });
+  }
+}
+
+export function requireAdmin(req, res, next) {
+  if (!req.user || req.user.papel !== 'admin') {
+    return res.status(403).json({ erro: 'Acesso restrito ao administrador' });
+  }
+  next();
+}
+
+export function requireFilial(req, res, next) {
+  if (!req.user || req.user.papel !== 'filial' || !req.user.filial_id) {
+    return res.status(403).json({ erro: 'Acesso restrito a usuários de filial' });
+  }
+  next();
+}
+
+/** ID da filial no escopo operacional (usuário filial). Admin não opera frota aqui. */
+export function filialScopeId(req) {
+  if (req.user?.papel === 'filial') return req.user.filial_id;
+  return null;
+}
+
+export function assertVeiculoDaFilial(veiculoId, filialId) {
+  const db = getDb();
+  const v = db.prepare(`
+    SELECT * FROM veiculos WHERE id = ? AND ativo = 1 AND filial_id = ?
+  `).get(veiculoId, filialId);
+  return v || null;
+}
+
+export function assertPneuDaFilial(pneuId, filialId) {
+  const db = getDb();
+  return db.prepare(`
+    SELECT p.*,
+      COALESCE(p.filial_id, v.filial_id) as filial_id,
+      v.placa, v.apelido, v.km_atual, v.hr_atual
+    FROM pneus p
+    LEFT JOIN veiculos v ON v.id = p.veiculo_id AND v.ativo = 1
+    WHERE p.id = ? AND p.ativo = 1
+      AND COALESCE(p.filial_id, v.filial_id) = ?
+  `).get(pneuId, filialId) || null;
+}
