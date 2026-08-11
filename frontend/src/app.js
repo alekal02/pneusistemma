@@ -16,6 +16,8 @@ let voltarPara = 'dashboard';
 let currentUser = null;
 let authToken = null;
 let slotPosicaoSelecionada = null;
+let modoAcessoRapido = false;
+let tokenAcessoRapido = null;
 
 const LAYOUT_POR_TIPO = {
   'Truck / Tração': 'truck_10',
@@ -67,6 +69,9 @@ async function fetchJSON(url, options = {}) {
     ...(options.headers || {}),
   };
   if (authToken) headers.Authorization = `Bearer ${authToken}`;
+  if (modoAcessoRapido && tokenAcessoRapido) {
+    headers['X-Acesso-Rapido-Token'] = tokenAcessoRapido;
+  }
 
   const resp = await fetch(url, { ...options, headers });
   let data;
@@ -77,7 +82,8 @@ async function fetchJSON(url, options = {}) {
   }
   if (resp.status === 401) {
     const isLogin = url.includes('/auth/login');
-    if (!isLogin) {
+    const isAcessoRapido = url.includes('/acesso-rapido') || modoAcessoRapido;
+    if (!isLogin && !isAcessoRapido) {
       clearAuth();
       showLogin();
     }
@@ -248,6 +254,7 @@ document.querySelectorAll('.tab').forEach((tab) => {
     if (view === 'acoes') loadAcoes();
     if (view === 'configuracoes') loadConfiguracoes();
     if (view === 'filiais') loadFiliais();
+    if (view === 'whatsapp') loadWhatsApp();
   });
 });
 
@@ -395,12 +402,18 @@ async function loadVeiculos() {
   }
 }
 
-async function openVeiculoDetalhe(id, origem = 'dashboard') {
+async function openVeiculoDetalhe(id, origem = 'dashboard', dadosPreload = null) {
   voltarPara = origem;
   try {
-    const v = await fetchJSON(`${API}/veiculos/${id}`);
+    const v = dadosPreload || await fetchJSON(`${API}/veiculos/${id}`);
     veiculoAtual = v;
     veiculoLayoutId = v.id;
+
+    if (v.posicoes) meta = { ...meta, posicoes: v.posicoes };
+    if (v.limites) {
+      limitesAtuais = { ...limitesAtuais, ...v.limites };
+      syncMarkersLimites();
+    }
 
     const layoutInfo = getLayoutById(v.layout_pneus);
     const nPos = v.posicoes_layout?.length || v.layout?.posicoes?.length || v.pneus.length;
@@ -412,9 +425,20 @@ async function openVeiculoDetalhe(id, origem = 'dashboard') {
         · ${v.pneus.length}/${nPos} pneus montados</p>
     `;
 
+    const barRapido = document.getElementById('acesso-rapido-bar');
+    if (barRapido) barRapido.classList.toggle('hidden', !modoAcessoRapido);
+
+    const btnVoltar = document.getElementById('btn-voltar-dashboard');
+    if (btnVoltar) btnVoltar.classList.toggle('hidden', modoAcessoRapido);
+
     const banner = document.getElementById('truck-fluxo-banner');
     if (banner) {
-      if (v.pneus.length === 0) {
+      if (modoAcessoRapido) {
+        banner.classList.remove('hidden');
+        banner.innerHTML = `
+          <strong>Medição via WhatsApp</strong>
+          Clique em um pneu montado para registrar o sulco. Montagem e descarte ficam disponíveis no sistema completo.`;
+      } else if (v.pneus.length === 0) {
         banner.classList.remove('hidden');
         banner.innerHTML = `
           <strong>Próximo passo: montar pneus</strong>
@@ -456,6 +480,7 @@ async function openVeiculoDetalhe(id, origem = 'dashboard') {
     document.getElementById('truck-km').value = v.km_atual || '';
     document.getElementById('truck-hr').value = v.hr_atual || '';
     document.getElementById('btn-truck-config').onclick = () => {
+      if (modoAcessoRapido) return toast('Indisponível no acesso rápido', 'error');
       abrirConfigLayout(
         v.id,
         v.apelido || v.placa,
@@ -464,6 +489,13 @@ async function openVeiculoDetalhe(id, origem = 'dashboard') {
       );
     };
 
+    const btnWa = document.getElementById('btn-truck-whatsapp');
+    if (btnWa) {
+      btnWa.classList.toggle('hidden', modoAcessoRapido);
+      btnWa.onclick = () => gerarLinkWhatsApp(v.id, v.placa);
+    }
+
+    aplicarVisibilidadeAcessoRapido();
     showView('veiculo-detalhe');
   } catch (err) {
     toast(err.message, 'error');
@@ -492,6 +524,32 @@ function atualizarResumoPneuTruck(pneu) {
     hint.textContent = papel === 'direcional'
       ? 'Posição dianteira (direcional).'
       : 'Posição de tração — pode usar misto ou direcional.';
+  }
+}
+
+function aplicarVisibilidadeAcessoRapido() {
+  const idsOps = [
+    'btn-truck-desmontar',
+    'btn-truck-recap',
+    'btn-truck-troca',
+    'btn-truck-config',
+  ];
+  idsOps.forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('hidden', modoAcessoRapido);
+  });
+  const montarBox = document.getElementById('truck-montar-box');
+  if (montarBox && modoAcessoRapido) montarBox.classList.add('hidden');
+}
+
+async function gerarLinkWhatsApp(veiculoId, placa) {
+  try {
+    const data = await fetchJSON(`${API}/veiculos/${veiculoId}/link-whatsapp`);
+    const texto = `🚛 *${data.placa || placa}*\n👉 ${data.link}`;
+    window.open(`https://wa.me/?text=${encodeURIComponent(texto)}`, '_blank');
+    toast('Link gerado — abrindo WhatsApp', 'success');
+  } catch (err) {
+    toast(err.message, 'error');
   }
 }
 
@@ -571,6 +629,7 @@ function selecionarPneuTruck(pneu) {
   document.getElementById('btn-truck-desmontar').onclick = () => desmontarPneuTruck();
   document.getElementById('btn-truck-recap').onclick = () => registrarEventoPneu('recap');
   document.getElementById('btn-truck-troca').onclick = () => registrarEventoPneu('troca');
+  aplicarVisibilidadeAcessoRapido();
 }
 
 async function salvarTipoPneuTruck() {
@@ -633,6 +692,10 @@ async function salvarTipoPneuTruck() {
 }
 
 async function selecionarSlotVazio(posicao) {
+  if (modoAcessoRapido) {
+    toast('Montagem de pneus não está disponível no acesso rápido. Use o sistema completo.', 'error');
+    return;
+  }
   pneuSelecionado = null;
   slotPosicaoSelecionada = posicao;
   document.querySelector('.truck-panel-empty').classList.add('hidden');
@@ -757,6 +820,9 @@ async function salvarMedicaoTruck() {
         sulco_auxiliar: pontos.auxiliar,
         pressao_psi: pressao,
         marcacao_json: truckTireMarker?.getValores(),
+        ...(modoAcessoRapido && tokenAcessoRapido
+          ? { token_acesso: tokenAcessoRapido }
+          : {}),
       }),
     });
 
@@ -1070,7 +1136,28 @@ document.getElementById('form-montar')?.addEventListener('submit', async (e) => 
 });
 async function abrirHistoricoPneu(pneuId) {
   try {
-    const data = await fetchJSON(`${API}/pneus/${pneuId}`);
+    let data;
+    if (modoAcessoRapido) {
+      const pneu = veiculoAtual?.pneus?.find((p) => Number(p.id) === Number(pneuId));
+      const medicoes = (veiculoAtual?.medicoes || [])
+        .filter((m) => Number(m.pneu_id) === Number(pneuId))
+        .map((m) => ({
+          ...m,
+          menor_sulco: [m.sulco_externo, m.sulco_central, m.sulco_interno, m.sulco_auxiliar]
+            .filter((v) => v != null)
+            .reduce((min, v) => (min == null || v < min ? v : min), null),
+          status_sulco: 'sem_dado',
+        }));
+      data = {
+        id: pneuId,
+        numero_fogo: pneu?.numero_fogo,
+        posicao: pneu?.posicao,
+        medicoes,
+        movimentacoes: [],
+      };
+    } else {
+      data = await fetchJSON(`${API}/pneus/${pneuId}`);
+    }
     const viewPneus = document.getElementById('view-pneus')?.classList.contains('active');
     const el = viewPneus
       ? document.getElementById('pneu-historico-panel')
@@ -1655,6 +1742,144 @@ document.getElementById('btn-salvar-config')?.addEventListener('click', async ()
   }
 });
 
+// ── WhatsApp (admin) ───────────────────────────────────
+
+let waPollTimer = null;
+
+function stopWaPoll() {
+  if (waPollTimer) {
+    clearInterval(waPollTimer);
+    waPollTimer = null;
+  }
+}
+
+function renderWaStatus(data) {
+  const badge = document.getElementById('wa-status-badge');
+  const name = document.getElementById('wa-status-name');
+  const jid = document.getElementById('wa-status-jid');
+  const webhook = document.getElementById('wa-status-webhook');
+  const url = document.getElementById('wa-status-url');
+  const qrWrap = document.getElementById('wa-qr-wrap');
+  const qrImg = document.getElementById('wa-qr-img');
+
+  if (!data?.configurado) {
+    badge.className = 'badge badge-critico';
+    badge.textContent = 'Não configurado';
+    name.textContent = '—';
+    jid.textContent = '—';
+    webhook.textContent = '—';
+    url.textContent = data?.mensagem || 'Defina WUZAPI_* no .env';
+    qrWrap?.classList.add('hidden');
+    return;
+  }
+
+  url.textContent = data.wuzapi_url || '—';
+  name.textContent = data.name || '—';
+  jid.textContent = data.jid || '—';
+  webhook.textContent = data.webhook || '—';
+
+  if (data.loggedIn) {
+    badge.className = 'badge badge-ok';
+    badge.textContent = 'Conectado e logado';
+    qrWrap?.classList.add('hidden');
+    stopWaPoll();
+  } else if (data.connected) {
+    badge.className = 'badge badge-alerta';
+    badge.textContent = 'Aguardando QR / login';
+  } else {
+    badge.className = 'badge badge-sem_dado';
+    badge.textContent = 'Desconectado';
+  }
+
+  if (data.qrcode && !data.loggedIn) {
+    qrImg.src = data.qrcode;
+    qrWrap?.classList.remove('hidden');
+  } else if (!data.loggedIn && data.connected) {
+    // mantém QR se já estiver na tela
+  } else if (data.loggedIn) {
+    qrWrap?.classList.add('hidden');
+  }
+}
+
+async function loadWhatsApp() {
+  if (!isAdmin()) return;
+  stopWaPoll();
+  try {
+    const data = await fetchJSON(`${API}/whatsapp/status`);
+    renderWaStatus(data);
+    if (data.connected && !data.loggedIn) {
+      startWaPoll();
+    }
+  } catch (err) {
+    toast(err.message, 'error');
+    renderWaStatus({ configurado: false, mensagem: err.message });
+  }
+}
+
+function startWaPoll() {
+  stopWaPoll();
+  waPollTimer = setInterval(async () => {
+    try {
+      const data = await fetchJSON(`${API}/whatsapp/status`);
+      renderWaStatus(data);
+      if (data.loggedIn) {
+        toast('WhatsApp conectado!', 'success');
+        stopWaPoll();
+      } else if (data.connected && !data.qrcode) {
+        const qr = await fetchJSON(`${API}/whatsapp/qr`);
+        if (qr.tem_qr) {
+          document.getElementById('wa-qr-img').src = qr.qrcode;
+          document.getElementById('wa-qr-wrap')?.classList.remove('hidden');
+        }
+      }
+    } catch {
+      // ignore poll errors
+    }
+  }, 3000);
+}
+
+document.getElementById('btn-wa-refresh')?.addEventListener('click', () => loadWhatsApp());
+
+document.getElementById('btn-wa-connect')?.addEventListener('click', async () => {
+  try {
+    toast('Iniciando conexão...');
+    const data = await fetchJSON(`${API}/whatsapp/connect`, { method: 'POST', body: '{}' });
+    renderWaStatus(data);
+    if (data.qrcode) {
+      document.getElementById('wa-qr-img').src = data.qrcode;
+      document.getElementById('wa-qr-wrap')?.classList.remove('hidden');
+    }
+    toast(data.mensagem || 'Escaneie o QR Code', 'success');
+    startWaPoll();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+});
+
+document.getElementById('btn-wa-disconnect')?.addEventListener('click', async () => {
+  try {
+    const data = await fetchJSON(`${API}/whatsapp/disconnect`, { method: 'POST', body: '{}' });
+    stopWaPoll();
+    toast(data.mensagem || 'Desconectado');
+    loadWhatsApp();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+});
+
+document.getElementById('btn-wa-logout')?.addEventListener('click', async () => {
+  if (!confirm('Encerrar a sessão do WhatsApp? Será preciso escanear o QR novamente.')) return;
+  try {
+    const data = await fetchJSON(`${API}/whatsapp/logout`, { method: 'POST', body: '{}' });
+    stopWaPoll();
+    toast(data.mensagem || 'Logout ok');
+    document.getElementById('wa-qr-wrap')?.classList.add('hidden');
+    loadWhatsApp();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+});
+
 // ── Filiais (admin) ────────────────────────────────────
 
 async function loadFiliais() {
@@ -2102,6 +2327,51 @@ document.getElementById('form-filial')?.addEventListener('submit', async (e) => 
 
 // ── Inicialização ──────────────────────────────────────
 
+function isRotaAcessoRapido() {
+  const path = window.location.pathname.replace(/\/+$/, '') || '/';
+  return path.endsWith('/veiculo-acesso-rapido')
+    || window.location.search.includes('token=') && path.includes('acesso-rapido');
+}
+
+function mostrarErroToken(msg) {
+  document.getElementById('app-login')?.classList.add('hidden');
+  document.getElementById('app-shell')?.classList.remove('hidden');
+  document.getElementById('nav-tabs-filial')?.classList.add('hidden');
+  document.getElementById('nav-tabs-admin')?.classList.add('hidden');
+  document.getElementById('btn-logout')?.classList.add('hidden');
+  const label = document.getElementById('header-user-label');
+  if (label) label.textContent = 'Acesso rápido';
+  const subtitle = document.getElementById('header-subtitle');
+  if (subtitle) subtitle.textContent = 'Link WhatsApp';
+  const box = document.querySelector('#view-acesso-erro .erro-token-container p');
+  if (box && msg) box.textContent = msg;
+  showView('acesso-erro');
+}
+
+async function bootAcessoRapido(token) {
+  modoAcessoRapido = true;
+  tokenAcessoRapido = token;
+  document.getElementById('app-login')?.classList.add('hidden');
+  document.getElementById('app-shell')?.classList.remove('hidden');
+  document.getElementById('nav-tabs-filial')?.classList.add('hidden');
+  document.getElementById('nav-tabs-admin')?.classList.add('hidden');
+  document.getElementById('btn-logout')?.classList.add('hidden');
+  const label = document.getElementById('header-user-label');
+  if (label) label.textContent = 'Acesso rápido · WhatsApp';
+  const subtitle = document.getElementById('header-subtitle');
+  if (subtitle) subtitle.textContent = 'Medição sem login — link temporário';
+
+  try {
+    const data = await fetchJSON(`${API}/veiculos/acesso-rapido?token=${encodeURIComponent(token)}`);
+    if (data.posicoes) meta = { ...meta, posicoes: data.posicoes };
+    if (data.limites) limitesAtuais = { ...limitesAtuais, ...data.limites };
+    tokenAcessoRapido = data.token_acesso || token;
+    await openVeiculoDetalhe(data.id, 'acesso-rapido', data);
+  } catch (err) {
+    mostrarErroToken(err.message || 'Link expirado ou inválido');
+  }
+}
+
 async function bootApp() {
   showAppShell();
   try {
@@ -2134,6 +2404,17 @@ async function bootApp() {
 }
 
 async function init() {
+  const params = new URLSearchParams(window.location.search);
+  const tokenUrl = params.get('token');
+  if (isRotaAcessoRapido() || (tokenUrl && window.location.pathname.includes('acesso-rapido'))) {
+    if (!tokenUrl) {
+      mostrarErroToken('Link inválido — token ausente.');
+      return;
+    }
+    await bootAcessoRapido(tokenUrl);
+    return;
+  }
+
   const saved = loadAuth();
   if (saved?.token && saved?.usuario) {
     authToken = saved.token;

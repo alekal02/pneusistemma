@@ -1,8 +1,6 @@
 import { Router } from 'express';
 import { getDb, classificarSulco } from '../database.js';
 import { TIPOS_VEICULO } from '../config.js';
-import { getLimites, menorSulco } from '../limites.js';
-import { diagnosticarPerfil, sugerirAcao, percentualVida } from '../diagnostico.js';
 import { requireAuth, requireFilial, filialScopeId } from '../auth.js';
 import {
   POSICOES_PNEU,
@@ -13,9 +11,7 @@ import {
   CONDICOES_PNEU,
   labelPosicao,
   papelPosicao,
-  sqlOrderPosicao,
   aplicarLayoutPneus,
-  getLayout,
 } from '../pneus-layouts.js';
 import { normalizarTipoVeiculo } from '../fix-encoding.js';
 import {
@@ -25,8 +21,38 @@ import {
   VEICULO_TEMPLATE_ROWS,
   mapLayoutId,
 } from '../csv-utils.js';
+import {
+  gerarTokenAcessoRapido,
+  validarTokenAcessoRapido,
+  marcarTokenUsado,
+  montarDetalheVeiculo,
+} from '../services/acesso-rapido.js';
 
 const router = Router();
+
+/** Público: acesso via token WhatsApp (sem JWT) */
+router.get('/acesso-rapido', (req, res) => {
+  const { token } = req.query;
+  if (!token) return res.status(400).json({ erro: 'Token obrigatório' });
+
+  const tokenRow = validarTokenAcessoRapido(String(token));
+  if (!tokenRow) {
+    return res.status(401).json({ erro: 'Token inválido ou expirado' });
+  }
+
+  marcarTokenUsado(tokenRow.id);
+
+  const detalhe = montarDetalheVeiculo(tokenRow.veiculo_id, tokenRow.filial_id);
+  if (!detalhe) {
+    return res.status(404).json({ erro: 'Veículo não encontrado' });
+  }
+
+  res.json({
+    ...detalhe,
+    acesso_rapido: true,
+    token_acesso: tokenRow.token,
+  });
+});
 
 router.use(requireAuth);
 router.use(requireFilial);
@@ -185,81 +211,36 @@ router.get('/', (req, res) => {
   res.json(resultado);
 });
 
-router.get('/:id', (req, res) => {
+/** Gera link de acesso rápido para compartilhar no WhatsApp */
+router.get('/:id/link-whatsapp', (req, res) => {
   const db = getDb();
   const filialId = filialScopeId(req);
-  const limites = getLimites();
   const veiculo = db.prepare(`
-    SELECT * FROM veiculos WHERE id = ? AND filial_id = ? AND ativo = 1
+    SELECT id, placa, filial_id FROM veiculos
+    WHERE id = ? AND ativo = 1 AND filial_id = ?
   `).get(req.params.id, filialId);
+
   if (!veiculo) return res.status(404).json({ erro: 'Veículo não encontrado' });
 
-  const orderSql = sqlOrderPosicao('p.posicao');
-  const pneus = db.prepare(`
-    SELECT p.*,
-      (SELECT sulco_externo FROM medicoes WHERE pneu_id = p.id ORDER BY data_medicao DESC, id DESC LIMIT 1) as ult_sulco_ext,
-      (SELECT sulco_central FROM medicoes WHERE pneu_id = p.id ORDER BY data_medicao DESC, id DESC LIMIT 1) as ult_sulco_cent,
-      (SELECT sulco_interno FROM medicoes WHERE pneu_id = p.id ORDER BY data_medicao DESC, id DESC LIMIT 1) as ult_sulco_int,
-      (SELECT sulco_auxiliar FROM medicoes WHERE pneu_id = p.id ORDER BY data_medicao DESC, id DESC LIMIT 1) as ult_sulco_aux,
-      (SELECT diagnostico FROM medicoes WHERE pneu_id = p.id ORDER BY data_medicao DESC, id DESC LIMIT 1) as ult_diagnostico,
-      (SELECT acao_sugerida FROM medicoes WHERE pneu_id = p.id ORDER BY data_medicao DESC, id DESC LIMIT 1) as ult_acao,
-      (SELECT data_medicao FROM medicoes WHERE pneu_id = p.id ORDER BY data_medicao DESC, id DESC LIMIT 1) as ult_medicao
-    FROM pneus p
-    WHERE p.veiculo_id = ? AND p.ativo = 1 AND p.status_pneu = 'montado'
-    ORDER BY ${orderSql}
-  `).all(req.params.id);
-
-  const pneusComStatus = pneus.map((p) => {
-    const row = {
-      sulco_externo: p.ult_sulco_ext,
-      sulco_central: p.ult_sulco_cent,
-      sulco_interno: p.ult_sulco_int,
-      sulco_auxiliar: p.ult_sulco_aux,
-    };
-    const menor = menorSulco(row);
-    const diag = diagnosticarPerfil(row, limites.diagnostico_tolerancia_mm);
-    const acao = sugerirAcao(menor, limites, p.vida_recap || 0);
-    const sulcoRef = p.sulco_inicial_mm ?? limites.sulco_novo_mm;
-
-    return {
-      ...p,
-      posicao_label: labelPosicao(p.posicao),
-      papel_posicao: papelPosicao(p.posicao),
-      menor_sulco: menor,
-      status_sulco: classificarSulco(menor),
-      diagnostico: p.ult_diagnostico || diag.codigo,
-      diagnostico_label: diag.label,
-      acao_sugerida: p.ult_acao || acao.codigo,
-      acao_label: acao.label,
-      acao_motivo: acao.motivo,
-      vida_util_pct: percentualVida(menor, sulcoRef, limites.sulco_critico_mm),
-      vida_label: p.vida_recap > 0
-        ? `${p.vida_recap}ª recap`
-        : (p.condicao === 'novo' ? 'Novo' : 'Recapado'),
-    };
+  const { token, link } = gerarTokenAcessoRapido({
+    veiculoId: veiculo.id,
+    filialId: veiculo.filial_id,
+    whatsappOrigem: null,
   });
-
-  const layout = getLayout(veiculo.layout_pneus || LAYOUT_PADRAO);
-  const posicoesLayout = (LAYOUTS_PNEU[veiculo.layout_pneus]
-    ? layout.posicoes
-    : layout.posicoes).map((codigo) => ({
-    codigo,
-    label: labelPosicao(codigo),
-    papel: papelPosicao(codigo),
-    montado: pneusComStatus.some((p) => p.posicao === codigo),
-  }));
 
   res.json({
-    ...veiculo,
-    tipo: normalizarTipoVeiculo(veiculo.tipo),
-    pneus: pneusComStatus,
-    posicoes_layout: posicoesLayout,
-    layout: {
-      id: veiculo.layout_pneus || LAYOUT_PADRAO,
-      nome: layout.nome,
-      posicoes: layout.posicoes,
-    },
+    link,
+    token,
+    placa: veiculo.placa,
+    expira_em_horas: 24,
   });
+});
+
+router.get('/:id', (req, res) => {
+  const filialId = filialScopeId(req);
+  const detalhe = montarDetalheVeiculo(req.params.id, filialId);
+  if (!detalhe) return res.status(404).json({ erro: 'Veículo não encontrado' });
+  res.json(detalhe);
 });
 
 router.post('/', (req, res) => {

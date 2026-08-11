@@ -1244,3 +1244,83 @@ h3 {
   .container { padding: 1.15rem 1rem 2rem; }
   .login-card { padding: 1.75rem 1.25rem; }
 }
+
+/* Acesso rápido WhatsApp */
+.acesso-rapido-bar {
+  margin: .75rem 0 1rem;
+  padding: .65rem 1rem;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(90deg, #e8f5e9, #f1f8e9);
+  border: 1px solid #a5d6a7;
+  color: #145223;
+  font-size: .9rem;
+  font-weight: 600;
+}
+.erro-token-container {
+  max-width: 420px;
+  margin: 3rem auto;
+  text-align: center;
+  padding: 2rem 1.5rem;
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #ddd);
+  border-radius: var(--radius, 12px);
+}
+.erro-token-container h2 {
+  font-family: var(--font-display, inherit);
+  margin: 0 0 .75rem;
+  color: var(--text, #1a1a1a);
+}
+.erro-token-container p {
+  color: var(--text-muted, #666);
+  line-height: 1.5;
+  margin: 0 0 1.5rem;
+}
+
+/* WhatsApp (admin) */
+.wa-status-card {
+  max-width: 640px;
+  display: flex;
+  flex-direction: column;
+  gap: .65rem;
+  margin-bottom: 1rem;
+}
+.wa-status-row {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: .75rem;
+  align-items: start;
+  font-size: .92rem;
+}
+.wa-label {
+  color: var(--text-muted, #666);
+  font-weight: 600;
+}
+.wa-status-row .mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: .82rem;
+  word-break: break-all;
+}
+.wa-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .6rem;
+  margin-bottom: 1.25rem;
+}
+.wa-qr-wrap {
+  max-width: 420px;
+  text-align: center;
+}
+.wa-qr-wrap h3 {
+  margin: 0 0 .5rem;
+  font-family: var(--font-display, inherit);
+}
+.wa-qr-img {
+  width: min(280px, 100%);
+  height: auto;
+  margin: 1rem auto;
+  display: block;
+  background: #fff;
+  border: 1px solid var(--border, #ddd);
+  border-radius: 8px;
+  padding: .5rem;
+}

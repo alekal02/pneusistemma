@@ -165,6 +165,41 @@ ensureColumn('medicoes', 'diagnostico', 'TEXT');
 ensureColumn('medicoes', 'acao_sugerida', 'TEXT');
 ensureColumn('medicoes', 'desgaste_mm_km', 'REAL');
 
+ensureColumn('usuarios', 'whatsapp', 'TEXT');
+ensureColumn('usuarios', 'cargo', `TEXT DEFAULT 'funcionario'`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS notificacoes_whatsapp (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tipo TEXT NOT NULL CHECK(tipo IN ('link_veiculo', 'alerta_critico', 'alerta_desgaste')),
+    destinatario_whatsapp TEXT NOT NULL,
+    veiculo_id INTEGER,
+    medicao_id INTEGER,
+    mensagem TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'enviado' CHECK(status IN ('enviado', 'erro', 'entregue')),
+    resposta_api TEXT,
+    criado_em TEXT DEFAULT (datetime('now', 'localtime')),
+    FOREIGN KEY (veiculo_id) REFERENCES veiculos(id),
+    FOREIGN KEY (medicao_id) REFERENCES medicoes(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS tokens_acesso_rapido (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    token TEXT UNIQUE NOT NULL,
+    veiculo_id INTEGER NOT NULL,
+    filial_id INTEGER NOT NULL,
+    whatsapp_origem TEXT,
+    expira_em TEXT NOT NULL,
+    usado_em TEXT,
+    criado_em TEXT DEFAULT (datetime('now', 'localtime')),
+    FOREIGN KEY (veiculo_id) REFERENCES veiculos(id),
+    FOREIGN KEY (filial_id) REFERENCES filiais(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_notif_whatsapp_medicao ON notificacoes_whatsapp(medicao_id);
+  CREATE INDEX IF NOT EXISTS idx_tokens_acesso_token ON tokens_acesso_rapido(token);
+`);
+
 try {
   db.exec('CREATE INDEX IF NOT EXISTS idx_veiculos_filial ON veiculos(filial_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_usuarios_filial ON usuarios(filial_id)');
@@ -195,24 +230,56 @@ function seedAuthAndFilial() {
   if (!admin) {
     const hash = bcrypt.hashSync(config.adminPassword, 10);
     db.prepare(`
-      INSERT INTO usuarios (login, senha_hash, papel, filial_id, ativo)
-      VALUES (?, ?, 'admin', NULL, 1)
+      INSERT INTO usuarios (login, senha_hash, papel, cargo, filial_id, ativo)
+      VALUES (?, ?, 'admin', 'admin', NULL, 1)
     `).run(config.adminUser, hash);
     console.log(`[seed] Admin criado: ${config.adminUser} / (senha do .env ADMIN_PASSWORD)`);
+  } else {
+    db.prepare(`
+      UPDATE usuarios SET cargo = COALESCE(NULLIF(cargo, ''), 'admin')
+      WHERE id = ? AND (cargo IS NULL OR cargo = '' OR cargo = 'funcionario')
+    `).run(admin.id);
   }
 
   // Usuário da Matriz se não existir
   const userMatriz = db.prepare(`
-    SELECT id FROM usuarios WHERE filial_id = ? AND papel = 'filial' LIMIT 1
+    SELECT id FROM usuarios WHERE filial_id = ? AND papel = 'filial' AND login = 'matriz' LIMIT 1
   `).get(matriz.id);
   if (!userMatriz) {
     const hash = bcrypt.hashSync('matriz123', 10);
     db.prepare(`
-      INSERT INTO usuarios (login, senha_hash, papel, filial_id, ativo)
-      VALUES ('matriz', ?, 'filial', ?, 1)
+      INSERT INTO usuarios (login, senha_hash, papel, cargo, filial_id, ativo)
+      VALUES ('matriz', ?, 'filial', 'funcionario', ?, 1)
     `).run(hash, matriz.id);
     console.log('[seed] Usuário filial Matriz: matriz / matriz123');
   }
+
+  const compras = db.prepare(`SELECT id FROM usuarios WHERE login = 'compras' LIMIT 1`).get();
+  if (!compras) {
+    const hash = bcrypt.hashSync('compras123', 10);
+    db.prepare(`
+      INSERT INTO usuarios (login, senha_hash, papel, cargo, whatsapp, filial_id, ativo)
+      VALUES ('compras', ?, 'admin', 'gerente_compras', '5511988888888', NULL, 1)
+    `).run(hash);
+    console.log('[seed] Gerente compras: compras / compras123 (WhatsApp 5511988888888)');
+  }
+
+  const gerenteMatriz = db.prepare(`
+    SELECT id FROM usuarios WHERE login = 'gerente_matriz' LIMIT 1
+  `).get();
+  if (!gerenteMatriz) {
+    const hash = bcrypt.hashSync('gerente123', 10);
+    db.prepare(`
+      INSERT INTO usuarios (login, senha_hash, papel, cargo, whatsapp, filial_id, ativo)
+      VALUES ('gerente_matriz', ?, 'filial', 'gerente_filial', '5511977777777', ?, 1)
+    `).run(hash, matriz.id);
+    console.log('[seed] Gerente filial Matriz: gerente_matriz / gerente123 (WhatsApp 5511977777777)');
+  }
+
+  db.prepare(`
+    UPDATE usuarios SET cargo = 'funcionario'
+    WHERE cargo IS NULL OR cargo = ''
+  `).run();
 
   return matriz.id;
 }

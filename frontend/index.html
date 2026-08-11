@@ -62,6 +62,7 @@
     </nav>
     <nav class="nav-tabs hidden" id="nav-tabs-admin">
       <button class="tab active" data-view="filiais">Filiais</button>
+      <button class="tab" data-view="whatsapp">WhatsApp</button>
       <button class="tab" data-view="configuracoes">Limites globais</button>
     </nav>
   </header>
@@ -76,6 +77,50 @@
       <div id="compras-consolidado" class="compras-banner"></div>
       <div id="filiais-lista" class="filiais-grid"></div>
       <div id="filial-detalhe" class="card hidden" style="margin-top:1.5rem"></div>
+    </section>
+
+    <section id="view-whatsapp" class="view">
+      <div class="section-header">
+        <h2>WhatsApp</h2>
+        <button class="btn btn-ghost btn-sm" id="btn-wa-refresh" type="button">Atualizar status</button>
+      </div>
+      <p class="hint">Conecte o número do sistema (WuzAPI) para receber placas e enviar alertas aos gerentes.</p>
+
+      <div class="wa-status-card card" id="wa-status-card">
+        <div class="wa-status-row">
+          <span class="wa-label">Status</span>
+          <span id="wa-status-badge" class="badge badge-sem_dado">Carregando...</span>
+        </div>
+        <div class="wa-status-row">
+          <span class="wa-label">Conta</span>
+          <span id="wa-status-name">—</span>
+        </div>
+        <div class="wa-status-row">
+          <span class="wa-label">JID</span>
+          <span id="wa-status-jid" class="mono">—</span>
+        </div>
+        <div class="wa-status-row">
+          <span class="wa-label">Webhook</span>
+          <span id="wa-status-webhook" class="mono">—</span>
+        </div>
+        <div class="wa-status-row">
+          <span class="wa-label">WuzAPI</span>
+          <span id="wa-status-url" class="mono">—</span>
+        </div>
+      </div>
+
+      <div class="wa-actions" id="wa-actions">
+        <button type="button" class="btn btn-primary" id="btn-wa-connect">Conectar / Gerar QR</button>
+        <button type="button" class="btn btn-ghost" id="btn-wa-disconnect">Desconectar</button>
+        <button type="button" class="btn btn-ghost btn-danger-text" id="btn-wa-logout">Sair da sessão (logout)</button>
+      </div>
+
+      <div class="wa-qr-wrap card hidden" id="wa-qr-wrap">
+        <h3>Escaneie o QR Code</h3>
+        <p class="hint">No celular: WhatsApp → Aparelhos conectados → Conectar um aparelho</p>
+        <img id="wa-qr-img" class="wa-qr-img" alt="QR Code WhatsApp">
+        <p class="hint" id="wa-qr-hint">O QR expira em poucos segundos — clique em “Conectar / Gerar QR” se não funcionar.</p>
+      </div>
     </section>
 
     <section id="view-dashboard" class="view">
@@ -179,6 +224,9 @@
     <section id="view-veiculo-detalhe" class="view">
       <button class="btn btn-ghost" id="btn-voltar-dashboard">← Voltar</button>
       <div id="truck-header" class="truck-header"></div>
+      <div class="acesso-rapido-bar hidden" id="acesso-rapido-bar">
+        <span>Modo acesso rápido (WhatsApp) — link válido por 24h</span>
+      </div>
       <div id="truck-fluxo-banner" class="fluxo-banner hidden"></div>
       <div class="truck-layout">
         <div class="card truck-diagram-wrap">
@@ -274,12 +322,21 @@
                 <button class="btn btn-ghost btn-sm" id="btn-truck-recap">Registrar recap</button>
                 <button class="btn btn-ghost btn-sm btn-danger-text" id="btn-truck-troca">Registrar descarte</button>
                 <button class="btn btn-ghost btn-sm" id="btn-truck-config">Configurar layout</button>
+                <button class="btn btn-primary btn-sm" id="btn-truck-whatsapp">Compartilhar WhatsApp</button>
               </div>
             </div>
           </div>
         </div>
       </div>
       <div id="historico-pneu" style="margin-top:1.5rem"></div>
+    </section>
+
+    <section id="view-acesso-erro" class="view">
+      <div class="erro-token-container">
+        <h2>Link expirado ou inválido</h2>
+        <p>Este link de acesso rápido não é mais válido. Solicite um novo link pelo WhatsApp enviando a placa do caminhão.</p>
+        <a class="btn btn-primary" href="/">Voltar ao login</a>
+      </div>
     </section>
 
     <section id="view-medicao" class="view">

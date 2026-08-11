@@ -14,6 +14,8 @@ import pneusRouter from './src/routes/pneus.js';
 import medicoesRouter from './src/routes/medicoes.js';
 import configuracoesRouter from './src/routes/configuracoes.js';
 import dashboardRouter from './src/routes/dashboard.js';
+import webhookRouter from './src/routes/webhook.js';
+import whatsappRouter from './src/routes/whatsapp.js';
 import { getLimites } from './src/limites.js';
 
 const app = express();
@@ -36,7 +38,13 @@ app.use((_req, res, next) => {
   next();
 });
 
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({
+  limit: '2mb',
+  verify: (req, _res, buf) => {
+    // Raw body para validação HMAC do webhook WuzAPI
+    req.rawBody = buf.toString('utf8');
+  },
+}));
 
 app.use('/api/auth', authRouter);
 app.use('/api/filiais', filiaisRouter);
@@ -45,6 +53,8 @@ app.use('/api/pneus', pneusRouter);
 app.use('/api/medicoes', medicoesRouter);
 app.use('/api/configuracoes', configuracoesRouter);
 app.use('/api/dashboard', dashboardRouter);
+app.use('/api/webhook', webhookRouter);
+app.use('/api/whatsapp', whatsappRouter);
 
 app.get('/api/health', (_req, res) => {
   const limites = getLimites();
@@ -68,6 +78,8 @@ app.listen(config.port, config.host, () => {
   console.log(`  Ambiente: ${config.nodeEnv}`);
   console.log(`  API: http://${config.host === '0.0.0.0' ? 'localhost' : config.host}:${config.port}/api`);
   console.log(`  CORS: ${config.corsOrigin}`);
+  console.log(`  Frontend links: ${config.frontendUrl}`);
+  console.log(`  WuzAPI: ${config.wuzapiBaseUrl}${config.wuzapiToken ? ' (token ok)' : ' (sem token)'}`);
   console.log(`  Banco: ${config.dbPath}`);
   console.log('========================================');
 });

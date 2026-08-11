@@ -70,9 +70,27 @@ pneu-main/
 | GET | `/api/veiculos` | Listar veículos |
 | POST | `/api/veiculos` | Cadastrar |
 | GET | `/api/veiculos/:id` | Detalhe |
+| GET | `/api/veiculos/acesso-rapido?token=` | Acesso rápido (WhatsApp) |
+| GET | `/api/veiculos/:id/link-whatsapp` | Gerar link WhatsApp |
 | GET | `/api/pneus/:id` | Histórico |
-| POST | `/api/medicoes` | Nova medição |
+| POST | `/api/medicoes` | Nova medição (+ alerta WhatsApp) |
 | GET | `/api/medicoes/alertas` | Alertas |
+| POST | `/api/webhook/whatsapp` | Webhook WuzAPI (placa → link) |
+
+## WhatsApp (WuzAPI)
+
+Fluxo: funcionário envia a **placa** no WhatsApp → backend gera link de acesso rápido (24h) → medição sem login → se sulco em alerta/crítico, notifica gerentes.
+
+Configure no `backend/.env` as variáveis `WUZAPI_*` e `FRONTEND_URL` (ver `backend/.env.example`).  
+Detalhes completos: [`INTEGRACAO_WHATSAPP.md`](INTEGRACAO_WHATSAPP.md).
+
+```bash
+# Configurar webhook no WuzAPI (após subir a API)
+curl -X POST http://localhost:8080/webhook \
+  -H "token: $WUZAPI_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"webhook":"http://localhost:3000/api/webhook/whatsapp","events":["Message"]}'
+```
 
 ## Licença
 

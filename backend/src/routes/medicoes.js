@@ -6,14 +6,45 @@ import {
   sugerirAcao,
   desgastePorKm,
 } from '../diagnostico.js';
-import { requireAuth, requireFilial, filialScopeId, assertPneuDaFilial } from '../auth.js';
+import {
+  requireAuth,
+  requireFilial,
+  filialScopeId,
+  assertPneuDaFilial,
+} from '../auth.js';
+import {
+  validarTokenAcessoRapido,
+  marcarTokenUsado,
+} from '../services/acesso-rapido.js';
+import { notificarGerentesAposMedicao } from '../services/alertas-whatsapp.js';
 
 const router = Router();
 
-router.use(requireAuth);
-router.use(requireFilial);
+/**
+ * JWT de filial OU token de acesso rápido (WhatsApp)
+ */
+function requireAuthOrAcessoRapido(req, res, next) {
+  const tokenAcesso = req.headers['x-acesso-rapido-token']
+    || req.body?.token_acesso
+    || req.query?.token_acesso;
 
-router.get('/alertas', (req, res) => {
+  if (tokenAcesso) {
+    const tokenRow = validarTokenAcessoRapido(String(tokenAcesso));
+    if (!tokenRow) {
+      return res.status(401).json({ erro: 'Token de acesso rápido inválido ou expirado' });
+    }
+    marcarTokenUsado(tokenRow.id);
+    req.acessoRapido = tokenRow;
+    return next();
+  }
+
+  return requireAuth(req, res, (err) => {
+    if (err) return next(err);
+    return requireFilial(req, res, next);
+  });
+}
+
+router.get('/alertas', requireAuth, requireFilial, (req, res) => {
   const db = getDb();
   const limites = getLimites();
   const filialId = filialScopeId(req);
@@ -65,7 +96,7 @@ router.get('/alertas', (req, res) => {
   res.json(resultado);
 });
 
-router.get('/acoes', (req, res) => {
+router.get('/acoes', requireAuth, requireFilial, (req, res) => {
   const db = getDb();
   const limites = getLimites();
   const filialId = filialScopeId(req);
@@ -121,7 +152,7 @@ router.get('/acoes', (req, res) => {
   });
 });
 
-router.post('/', (req, res) => {
+router.post('/', requireAuthOrAcessoRapido, async (req, res) => {
   const {
     pneu_id,
     data_medicao,
@@ -139,11 +170,24 @@ router.post('/', (req, res) => {
 
   if (!pneu_id) return res.status(400).json({ erro: 'pneu_id é obrigatório' });
 
-  const filialId = filialScopeId(req);
-  const pneu = assertPneuDaFilial(pneu_id, filialId);
-  if (!pneu) return res.status(404).json({ erro: 'Pneu não encontrado' });
-
   const db = getDb();
+  let filialId;
+  let pneu;
+
+  if (req.acessoRapido) {
+    filialId = req.acessoRapido.filial_id;
+    pneu = assertPneuDaFilial(pneu_id, filialId);
+    if (!pneu) return res.status(404).json({ erro: 'Pneu não encontrado' });
+    // R3: só o veículo do token
+    if (Number(pneu.veiculo_id) !== Number(req.acessoRapido.veiculo_id)) {
+      return res.status(403).json({ erro: 'Este token não permite medir este veículo' });
+    }
+  } else {
+    filialId = filialScopeId(req);
+    pneu = assertPneuDaFilial(pneu_id, filialId);
+    if (!pneu) return res.status(404).json({ erro: 'Pneu não encontrado' });
+  }
+
   const limites = getLimites();
   const medicaoRow = {
     sulco_externo: sulco_externo ?? null,
@@ -159,6 +203,7 @@ router.post('/', (req, res) => {
 
   const diag = diagnosticarPerfil(medicaoRow, limites.diagnostico_tolerancia_mm);
   const acao = sugerirAcao(menor, limites, pneu.vida_recap || 0);
+  const statusSulco = classificarSulco(menor);
 
   const anterior = db.prepare(`
     SELECT * FROM medicoes WHERE pneu_id = ?
@@ -180,6 +225,8 @@ router.post('/', (req, res) => {
   }
 
   const data = data_medicao || new Date().toISOString().split('T')[0];
+  const responsavelFinal = responsavel?.trim()
+    || (req.acessoRapido ? `WhatsApp ${req.acessoRapido.whatsapp_origem || 'acesso-rapido'}` : null);
 
   const result = db.prepare(`
     INSERT INTO medicoes (
@@ -198,13 +245,15 @@ router.post('/', (req, res) => {
     sulco_interno ?? null,
     sulco_auxiliar ?? null,
     pressao_psi ?? null,
-    responsavel?.trim() || null,
+    responsavelFinal,
     observacoes?.trim() || null,
     marcacao_json ? JSON.stringify(marcacao_json) : null,
     diag.codigo,
     acao.codigo,
     desgaste
   );
+
+  const medicaoId = result.lastInsertRowid;
 
   if (km_veiculo) {
     db.prepare(`
@@ -234,10 +283,27 @@ router.post('/', (req, res) => {
     `Diagnóstico: ${diag.label} · Ação: ${acao.label}`
   );
 
+  const veiculo = db.prepare(`SELECT * FROM veiculos WHERE id = ?`).get(pneu.veiculo_id);
+
+  let notificacao = null;
+  try {
+    notificacao = await notificarGerentesAposMedicao({
+      statusSulco,
+      diagnosticoLabel: diag.label,
+      acaoLabel: acao.label,
+      menorSulco: menor,
+      veiculo,
+      pneu,
+      medicaoId,
+    });
+  } catch (err) {
+    console.error('[medicoes] Falha ao notificar gerentes:', err);
+  }
+
   res.status(201).json({
-    id: result.lastInsertRowid,
+    id: medicaoId,
     menor_sulco: menor,
-    status_sulco: classificarSulco(menor),
+    status_sulco: statusSulco,
     diagnostico: diag.codigo,
     diagnostico_label: diag.label,
     diagnostico_desc: diag.descricao,
@@ -245,11 +311,12 @@ router.post('/', (req, res) => {
     acao_label: acao.label,
     acao_motivo: acao.motivo,
     desgaste_mm_km: desgaste,
+    notificacao_whatsapp: notificacao,
     mensagem: 'Medição registrada',
   });
 });
 
-router.delete('/:id', (req, res) => {
+router.delete('/:id', requireAuth, requireFilial, (req, res) => {
   const db = getDb();
   const filialId = filialScopeId(req);
   const med = db.prepare(`
