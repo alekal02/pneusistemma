@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Controle de Pneus - Limpeza Urbana</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%231a1a1a'/><circle cx='50' cy='50' r='20' fill='%23888'/></svg>">
+</head>
+<body>
+  <header class="header">
+    <div class="header-brand">
+      <div class="logo">🛞</div>
+      <div>
+        <h1>Controle de Pneus</h1>
+        <p class="subtitle">Gestão de desgaste da frota</p>
+      </div>
+    </div>
+    <nav class="nav-tabs">
+      <button class="tab active" data-view="dashboard">Dashboard</button>
+      <button class="tab" data-view="veiculos">Veículos</button>
+      <button class="tab" data-view="medicao">Nova Medição</button>
+      <button class="tab" data-view="alertas">Alertas</button>
+      <button class="tab" data-view="configuracoes">Configurações</button>
+    </nav>
+  </header>
+
+  <main class="container">
+    <section id="view-dashboard" class="view active">
+      <div class="stats-grid" id="stats-grid">
+        <div class="stat-card">
+          <span class="stat-value" id="stat-veiculos">-</span>
+          <span class="stat-label">Veículos ativos</span>
+        </div>
+        <div class="stat-card stat-ok">
+          <span class="stat-value" id="stat-ok">-</span>
+          <span class="stat-label">Pneus OK</span>
+        </div>
+        <div class="stat-card stat-alerta">
+          <span class="stat-value" id="stat-alerta">-</span>
+          <span class="stat-label">Em alerta</span>
+        </div>
+        <div class="stat-card stat-critico">
+          <span class="stat-value" id="stat-critico">-</span>
+          <span class="stat-label">Críticos</span>
+        </div>
+      </div>
+      <h2>Resumo da Frota</h2>
+      <p class="hint" id="dashboard-limites-hint"></p>
+      <div id="dashboard-lista" class="card-list"></div>
+    </section>
+
+    <section id="view-veiculos" class="view">
+      <div class="section-header">
+        <h2>Veículos</h2>
+        <button class="btn btn-primary" id="btn-novo-veiculo">+ Novo Veículo</button>
+      </div>
+      <div id="veiculos-lista" class="card-list"></div>
+    </section>
+
+    <section id="view-veiculo-detalhe" class="view">
+      <button class="btn btn-ghost" id="btn-voltar-dashboard">← Voltar</button>
+      <div id="truck-header" class="truck-header"></div>
+      <div class="truck-layout">
+        <div class="card truck-diagram-wrap">
+          <div id="truck-diagram-container"></div>
+        </div>
+        <div class="card truck-panel" id="truck-panel">
+          <div class="truck-panel-empty">
+            <p>Selecione um pneu no caminhão</p>
+            <p class="hint">As medições são salvas automaticamente</p>
+          </div>
+          <div class="truck-panel-form hidden" id="truck-panel-form">
+            <h3 id="truck-pneu-nome">Pneu</h3>
+            <span id="truck-pneu-status"></span>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="truck-sulco-ext">Sulco Externo (mm)</label>
+                <input type="number" id="truck-sulco-ext" step="0.1" min="0" max="20">
+              </div>
+              <div class="form-group">
+                <label for="truck-sulco-cent">Sulco Central (mm)</label>
+                <input type="number" id="truck-sulco-cent" step="0.1" min="0" max="20">
+              </div>
+              <div class="form-group">
+                <label for="truck-sulco-int">Sulco Interno (mm)</label>
+                <input type="number" id="truck-sulco-int" step="0.1" min="0" max="20">
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="truck-pressao">Pressão (PSI)</label>
+                <input type="number" id="truck-pressao" step="0.5" min="0">
+              </div>
+              <div class="form-group">
+                <label for="truck-km">KM veículo</label>
+                <input type="number" id="truck-km" min="0">
+              </div>
+            </div>
+            <p class="hint save-status" id="truck-save-status">Preencha os sulcos — salva automaticamente</p>
+            <div id="truck-mini-marker" class="tire-container" style="min-height:280px"></div>
+            <button class="btn btn-ghost btn-sm" id="btn-truck-historico">Ver histórico</button>
+            <button class="btn btn-ghost btn-sm" id="btn-truck-config">Configurar pneus</button>
+          </div>
+        </div>
+      </div>
+      <div id="historico-pneu" style="margin-top:1.5rem"></div>
+    </section>
+
+    <section id="view-medicao" class="view">
+      <h2>Registrar Medição de Sulco</h2>
+      <div class="medicao-layout">
+        <div class="medicao-form card">
+          <div class="form-group">
+            <label for="med-veiculo">Veículo</label>
+            <select id="med-veiculo" required><option value="">Selecione...</option></select>
+          </div>
+          <div class="form-group">
+            <label for="med-pneu">Posição do Pneu</label>
+            <select id="med-pneu" required disabled><option value="">Selecione o veículo primeiro</option></select>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="med-data">Data</label>
+              <input type="date" id="med-data">
+            </div>
+            <div class="form-group">
+              <label for="med-km">KM do veículo</label>
+              <input type="number" id="med-km" min="0" placeholder="Ex: 45000">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="med-externo">Sulco Externo (mm)</label>
+              <input type="number" id="med-externo" step="0.1" min="0" max="20" placeholder="0.0">
+            </div>
+            <div class="form-group">
+              <label for="med-central">Sulco Central (mm)</label>
+              <input type="number" id="med-central" step="0.1" min="0" max="20" placeholder="0.0">
+            </div>
+            <div class="form-group">
+              <label for="med-interno">Sulco Interno (mm)</label>
+              <input type="number" id="med-interno" step="0.1" min="0" max="20" placeholder="0.0">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="med-pressao">Pressão (PSI)</label>
+              <input type="number" id="med-pressao" step="0.5" min="0" placeholder="Ex: 110">
+            </div>
+            <div class="form-group">
+              <label for="med-responsavel">Responsável</label>
+              <input type="text" id="med-responsavel" placeholder="Nome do inspetor">
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="med-obs">Observações</label>
+            <textarea id="med-obs" rows="2" placeholder="Desgaste irregular, cortes, etc."></textarea>
+          </div>
+          <button class="btn btn-primary btn-block" id="btn-salvar-medicao">Salvar Medição</button>
+        </div>
+
+        <div class="medicao-pneu card">
+          <h3>Marcação Visual do Pneu</h3>
+          <p class="hint">Clique nos pontos coloridos para preencher o sulco correspondente</p>
+          <div id="tire-marker-container" class="tire-container"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-alertas" class="view">
+      <h2>Alertas de Desgaste</h2>
+      <p class="hint" id="alertas-limites-hint"></p>
+      <div id="alertas-lista" class="card-list"></div>
+    </section>
+
+    <section id="view-configuracoes" class="view">
+      <h2>Limites de Desgaste</h2>
+      <p class="hint">Defina em milímetros (mm) quando um pneu é considerado em alerta ou crítico.</p>
+
+      <div class="config-layout">
+        <div class="card config-form">
+          <div class="form-group">
+            <label for="cfg-critico">Crítico — trocar pneu (mm)</label>
+            <input type="number" id="cfg-critico" step="0.1" min="0" max="20" placeholder="Ex: 1.6">
+            <small class="field-hint">Abaixo deste valor o pneu é considerado crítico (padrão legal: 1,6 mm)</small>
+          </div>
+          <div class="form-group">
+            <label for="cfg-alerta">Alerta — atenção preventiva (mm)</label>
+            <input type="number" id="cfg-alerta" step="0.1" min="0" max="20" placeholder="Ex: 3.0">
+            <small class="field-hint">Entre o crítico e este valor o pneu entra em alerta</small>
+          </div>
+          <button class="btn btn-primary" id="btn-salvar-config">Salvar Limites</button>
+        </div>
+
+        <div class="card config-preview">
+          <h3>Como funciona a classificação</h3>
+          <div class="limite-bar" id="limite-bar">
+            <div class="limite-segment critico" id="bar-critico">
+              <span>Crítico</span>
+              <strong id="preview-critico">≤ 1.6 mm</strong>
+            </div>
+            <div class="limite-segment alerta" id="bar-alerta">
+              <span>Alerta</span>
+              <strong id="preview-alerta">1.6 – 3.0 mm</strong>
+            </div>
+            <div class="limite-segment ok" id="bar-ok">
+              <span>OK</span>
+              <strong id="preview-ok">&gt; 3.0 mm</strong>
+            </div>
+          </div>
+          <ul class="config-legenda">
+            <li><span class="dot dot-critico"></span> <strong>Crítico:</strong> sulco no limite ou abaixo — substituir o pneu</li>
+            <li><span class="dot dot-alerta"></span> <strong>Alerta:</strong> desgaste avançado — planejar troca</li>
+            <li><span class="dot dot-ok"></span> <strong>OK:</strong> sulco dentro do aceitável</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="modal-veiculo" class="modal">
+    <form id="form-veiculo" method="dialog">
+      <h3 id="modal-veiculo-titulo">Novo Veículo</h3>
+      <div class="form-group">
+        <label for="v-placa">Placa *</label>
+        <input type="text" id="v-placa" required placeholder="ABC1D23" maxlength="8">
+      </div>
+      <div class="form-group">
+        <label for="v-apelido">Apelido / Identificação</label>
+        <input type="text" id="v-apelido" placeholder="Ex: Compactador 01">
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="v-tipo">Tipo</label>
+          <select id="v-tipo"></select>
+        </div>
+        <div class="form-group">
+          <label for="v-ano">Ano</label>
+          <input type="number" id="v-ano" min="1990" max="2030">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="v-marca">Marca</label>
+          <input type="text" id="v-marca" placeholder="Ex: Mercedes">
+        </div>
+        <div class="form-group">
+          <label for="v-modelo">Modelo</label>
+          <input type="text" id="v-modelo" placeholder="Ex: Atego">
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="v-layout">Configuração de pneus</label>
+        <select id="v-layout"></select>
+        <small class="field-hint" id="v-layout-desc"></small>
+        <div id="v-layout-preview" class="layout-preview"></div>
+      </div>
+      <div class="form-group">
+        <label for="v-km">KM Atual</label>
+        <input type="number" id="v-km" min="0" value="0">
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" id="btn-cancelar-veiculo">Cancelar</button>
+        <button type="submit" class="btn btn-primary">Salvar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="modal-layout" class="modal modal-wide">
+    <form id="form-layout" method="dialog">
+      <h3>Configurar pneus do veículo</h3>
+      <p class="hint" id="layout-veiculo-nome"></p>
+      <div class="form-group">
+        <label for="layout-select">Layout de eixos</label>
+        <select id="layout-select"></select>
+        <small class="field-hint" id="layout-select-desc"></small>
+      </div>
+      <div id="layout-posicoes-preview" class="layout-posicoes-grid"></div>
+      <details class="layout-custom">
+        <summary>Personalizar posições manualmente</summary>
+        <div id="layout-custom-checkboxes" class="layout-checkboxes"></div>
+      </details>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" id="btn-cancelar-layout">Cancelar</button>
+        <button type="submit" class="btn btn-primary">Aplicar configuração</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

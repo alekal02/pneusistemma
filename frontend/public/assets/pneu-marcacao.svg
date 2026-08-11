@@ -1,0 +1,228 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 500" id="pneu-svg">
+  <defs>
+    <!-- Gradientes de borracha -->
+    <radialGradient id="sidewall-outer" cx="50%" cy="45%" r="55%">
+      <stop offset="0%" stop-color="#4a4a4a"/>
+      <stop offset="55%" stop-color="#2b2b2b"/>
+      <stop offset="85%" stop-color="#1a1a1a"/>
+      <stop offset="100%" stop-color="#0f0f0f"/>
+    </radialGradient>
+    <radialGradient id="sidewall-inner" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#353535"/>
+      <stop offset="70%" stop-color="#222"/>
+      <stop offset="100%" stop-color="#141414"/>
+    </radialGradient>
+    <radialGradient id="tread-surface" cx="50%" cy="42%" r="52%">
+      <stop offset="0%" stop-color="#3a3a3a"/>
+      <stop offset="40%" stop-color="#2a2a2a"/>
+      <stop offset="100%" stop-color="#1c1c1c"/>
+    </radialGradient>
+    <radialGradient id="groove-depth" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#0a0a0a"/>
+      <stop offset="100%" stop-color="#151515"/>
+    </radialGradient>
+    <linearGradient id="shoulder-highlight" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#555" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#000" stop-opacity="0"/>
+    </linearGradient>
+    <!-- Aro met&#225;lico -->
+    <radialGradient id="rim-metal" cx="35%" cy="30%" r="70%">
+      <stop offset="0%" stop-color="#e8e8e8"/>
+      <stop offset="25%" stop-color="#b0b0b0"/>
+      <stop offset="55%" stop-color="#7a7a7a"/>
+      <stop offset="80%" stop-color="#9a9a9a"/>
+      <stop offset="100%" stop-color="#5a5a5a"/>
+    </radialGradient>
+    <radialGradient id="hub-center" cx="40%" cy="35%" r="60%">
+      <stop offset="0%" stop-color="#888"/>
+      <stop offset="100%" stop-color="#3a3a3a"/>
+    </radialGradient>
+    <filter id="sombra-pneu" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+    <filter id="textura-sutil">
+      <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="4" seed="2" result="noise"/>
+      <feColorMatrix type="saturate" values="0" in="noise" result="gray"/>
+      <feBlend in="SourceGraphic" in2="gray" mode="multiply"/>
+    </filter>
+    <clipPath id="clip-tread">
+      <circle cx="200" cy="270" r="118"/>
+    </clipPath>
+    <marker id="seta-rotacao" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#64748b"/>
+    </marker>
+  </defs>
+
+  <!-- Fundo -->
+  <rect width="400" height="500" fill="#eef2f6" rx="8"/>
+  <rect x="30" y="60" width="340" height="380" rx="12" fill="#e2e8f0" opacity="0.5"/>
+
+  <text x="200" y="32" text-anchor="middle" font-family="Segoe UI, system-ui, sans-serif" font-size="13" font-weight="600" fill="#334155">Vista Superior &#8212; Marca&#231;&#227;o de Sulcos</text>
+
+  <g filter="url(#sombra-pneu)">
+    <!-- Sombra no ch&#227;o -->
+    <ellipse cx="200" cy="278" rx="148" ry="18" fill="#000" opacity="0.12"/>
+
+    <!-- Pneu completo -->
+    <g id="pneu-realista">
+      <!-- Parede lateral externa (anel grosso) -->
+      <circle cx="200" cy="270" r="152" fill="url(#sidewall-outer)" stroke="#0a0a0a" stroke-width="1.5"/>
+      <!-- Borda do ombro -->
+      <circle cx="200" cy="270" r="138" fill="none" stroke="#111" stroke-width="0.8" opacity="0.6"/>
+      <!-- &#193;rea da banda de rodagem -->
+      <circle cx="200" cy="270" r="125" fill="url(#tread-surface)"/>
+      <!-- Ombro interno -->
+      <circle cx="200" cy="270" r="120" fill="none" stroke="#444" stroke-width="1.2" opacity="0.4"/>
+
+      <!-- Sulcos circunferenciais profundos -->
+      <g fill="url(#groove-depth)" opacity="0.95">
+        <circle cx="200" cy="270" r="112" fill="none" stroke="#080808" stroke-width="5"/>
+        <circle cx="200" cy="270" r="98" fill="none" stroke="#0a0a0a" stroke-width="4"/>
+        <circle cx="200" cy="270" r="84" fill="none" stroke="#0c0c0c" stroke-width="3.5"/>
+        <circle cx="200" cy="270" r="70" fill="none" stroke="#0e0e0e" stroke-width="3"/>
+      </g>
+
+      <!-- Padr&#227;o de blocos da banda de rodagem -->
+      <g clip-path="url(#clip-tread)" opacity="0.85">
+        <!-- Blocos radiais -->
+        <g fill="#252525" stroke="#111" stroke-width="0.5">
+          <!-- Gerados em 24 segmentos -->
+          <path d="M200,152 L208,158 L205,175 L195,175 L192,158 Z"/>
+          <path d="M200,152 L208,158 L218,165 L212,178 L200,175 Z" transform="rotate(15 200 270)"/>
+          <path d="M200,152 L208,158 L218,165 L212,178 L200,175 Z" transform="rotate(30 200 270)"/>
+          <path d="M200,152 L208,158 L218,165 L212,178 L200,175 Z" transform="rotate(45 200 270)"/>
+          <path d="M200,152 L208,158 L218,165 L212,178 L200,175 Z" transform="rotate(60 200 270)"/>
+          <path d="M200,152 L208,158 L218,165 L212,178 L200,175 Z" transform="rotate(75 200 270)"/>
+          <path d="M200,152 L208,158 L218,165 L212,178 L200,175 Z" transform="rotate(90 200 270)"/>
+          <path d="M200,152 L208,158 L218,165 L212,178 L200,175 Z" transform="rotate(105 200 270)"/>
+          <path d="M200,152 L208,158 L218,165 L212,178 L200,175 Z" transform="rotate(120 200 270)"/>
+          <path d="M200,152 L208,158 L218,165 L212,178 L200,175 Z" transform="rotate(135 200 270)"/>
+          <path d="M200,152 L208,158 L218,165 L212,178 L200,175 Z" transform="rotate(150 200 270)"/>
+          <path d="M200,152 L208,158 L218,165 L212,178 L200,175 Z" transform="rotate(165 200 270)"/>
+          <path d="M200,152 L208,158 L218,165 L212,178 L200,175 Z" transform="rotate(180 200 270)"/>
+          <path d="M200,152 L208,158 L218,165 L212,178 L200,175 Z" transform="rotate(195 200 270)"/>
+          <path d="M200,152 L208,158 L218,165 L212,178 L200,175 Z" transform="rotate(210 200 270)"/>
+          <path d="M200,152 L208,158 L218,165 L212,178 L200,175 Z" transform="rotate(225 200 270)"/>
+          <path d="M200,152 L208,158 L218,165 L212,178 L200,175 Z" transform="rotate(240 200 270)"/>
+          <path d="M200,152 L208,158 L218,165 L212,178 L200,175 Z" transform="rotate(255 200 270)"/>
+          <path d="M200,152 L208,158 L218,165 L212,178 L200,175 Z" transform="rotate(270 200 270)"/>
+          <path d="M200,152 L208,158 L218,165 L212,178 L200,175 Z" transform="rotate(285 200 270)"/>
+          <path d="M200,152 L208,158 L218,165 L212,178 L200,175 Z" transform="rotate(300 200 270)"/>
+          <path d="M200,152 L208,158 L218,165 L212,178 L200,175 Z" transform="rotate(315 200 270)"/>
+          <path d="M200,152 L208,158 L218,165 L212,178 L200,175 Z" transform="rotate(330 200 270)"/>
+          <path d="M200,152 L208,158 L218,165 L212,178 L200,175 Z" transform="rotate(345 200 270)"/>
+        </g>
+        <!-- Sipes transversais (cortes finos de desgaste) -->
+        <g stroke="#0d0d0d" stroke-width="1.2" fill="none" opacity="0.7">
+          <line x1="200" y1="158" x2="200" y2="175" transform="rotate(0 200 270)"/>
+          <line x1="200" y1="158" x2="200" y2="175" transform="rotate(30 200 270)"/>
+          <line x1="200" y1="158" x2="200" y2="175" transform="rotate(60 200 270)"/>
+          <line x1="200" y1="158" x2="200" y2="175" transform="rotate(90 200 270)"/>
+          <line x1="200" y1="158" x2="200" y2="175" transform="rotate(120 200 270)"/>
+          <line x1="200" y1="158" x2="200" y2="175" transform="rotate(150 200 270)"/>
+          <line x1="200" y1="158" x2="200" y2="175" transform="rotate(180 200 270)"/>
+          <line x1="200" y1="158" x2="200" y2="175" transform="rotate(210 200 270)"/>
+          <line x1="200" y1="158" x2="200" y2="175" transform="rotate(240 200 270)"/>
+          <line x1="200" y1="158" x2="200" y2="175" transform="rotate(270 200 270)"/>
+          <line x1="200" y1="158" x2="200" y2="175" transform="rotate(300 200 270)"/>
+          <line x1="200" y1="158" x2="200" y2="175" transform="rotate(330 200 270)"/>
+        </g>
+      </g>
+
+      <!-- Destaque nos ombros -->
+      <circle cx="200" cy="270" r="125" fill="url(#shoulder-highlight)" pointer-events="none"/>
+      <circle cx="200" cy="270" r="120" fill="none" stroke="#555" stroke-width="0.6" opacity="0.25"/>
+
+      <!-- Marca&#231;&#245;es de desgaste TWI -->
+      <g fill="#666" opacity="0.5">
+        <rect x="198" y="148" width="4" height="8" rx="1"/>
+        <rect x="198" y="384" width="4" height="8" rx="1"/>
+        <rect x="84" y="268" width="8" height="4" rx="1"/>
+        <rect x="308" y="268" width="8" height="4" rx="1"/>
+      </g>
+
+      <!-- Aro / roda -->
+      <circle cx="200" cy="270" r="62" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+      <circle cx="200" cy="270" r="58" fill="url(#rim-metal)" stroke="#666" stroke-width="1.5"/>
+      <!-- Raios do aro -->
+      <g fill="url(#rim-metal)" stroke="#888" stroke-width="0.5">
+        <path d="M200,215 L205,255 L195,255 Z"/>
+        <path d="M200,215 L205,255 L195,255 Z" transform="rotate(60 200 270)"/>
+        <path d="M200,215 L205,255 L195,255 Z" transform="rotate(120 200 270)"/>
+        <path d="M200,215 L205,255 L195,255 Z" transform="rotate(180 200 270)"/>
+        <path d="M200,215 L205,255 L195,255 Z" transform="rotate(240 200 270)"/>
+        <path d="M200,215 L205,255 L195,255 Z" transform="rotate(300 200 270)"/>
+      </g>
+      <circle cx="200" cy="270" r="42" fill="#2a2a2a" stroke="#555" stroke-width="1"/>
+      <circle cx="200" cy="270" r="38" fill="url(#hub-center)" stroke="#777" stroke-width="1"/>
+      <!-- Porcas do cubo -->
+      <g fill="#aaa" stroke="#666" stroke-width="0.5">
+        <circle cx="200" cy="238" r="4.5"/>
+        <circle cx="228" cy="254" r="4.5"/>
+        <circle cx="228" cy="286" r="4.5"/>
+        <circle cx="200" cy="302" r="4.5"/>
+        <circle cx="172" cy="286" r="4.5"/>
+        <circle cx="172" cy="254" r="4.5"/>
+      </g>
+      <circle cx="200" cy="270" r="14" fill="#555" stroke="#888" stroke-width="1"/>
+      <circle cx="200" cy="270" r="6" fill="#333"/>
+
+      <!-- Texto lateral simulado na parede -->
+      <text x="200" y="118" text-anchor="middle" font-family="Arial, sans-serif" font-size="7" font-weight="700" fill="#555" letter-spacing="2" opacity="0.7">295/80 R22.5</text>
+    </g>
+  </g>
+
+  <!-- Indicador de rota&#231;&#227;o -->
+  <path d="M 248 158 A 55 55 0 0 1 298 208" fill="none" stroke="#64748b" stroke-width="1.8" marker-end="url(#seta-rotacao)"/>
+  <text x="302" y="212" font-family="Segoe UI, sans-serif" font-size="10" fill="#64748b">Rota&#231;&#227;o</text>
+
+  <!-- Linhas guia de medi&#231;&#227;o -->
+  <g stroke="#94a3b8" stroke-width="1" stroke-dasharray="4,3" opacity="0.5" fill="none">
+    <line x1="200" y1="175" x2="200" y2="138"/>
+    <line x1="318" y1="270" x2="348" y2="270"/>
+    <line x1="82" y1="270" x2="52" y2="270"/>
+  </g>
+
+  <!-- Pontos de medi&#231;&#227;o -->
+  <g id="ponto-externo" class="ponto-medicao" data-sulco="externo">
+    <circle cx="318" cy="270" r="20" fill="#3b82f6" stroke="#fff" stroke-width="3" class="ponto-circulo" opacity="0.95"/>
+    <circle cx="318" cy="270" r="14" fill="none" stroke="#fff" stroke-width="1" opacity="0.4"/>
+    <text x="318" y="275" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="700" fill="#fff" pointer-events="none">EXT</text>
+  </g>
+
+  <g id="ponto-central" class="ponto-medicao" data-sulco="central">
+    <circle cx="200" cy="158" r="20" fill="#22c55e" stroke="#fff" stroke-width="3" class="ponto-circulo" opacity="0.95"/>
+    <circle cx="200" cy="158" r="14" fill="none" stroke="#fff" stroke-width="1" opacity="0.4"/>
+    <text x="200" y="163" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="700" fill="#fff" pointer-events="none">CENT</text>
+  </g>
+
+  <g id="ponto-interno" class="ponto-medicao" data-sulco="interno">
+    <circle cx="82" cy="270" r="20" fill="#f59e0b" stroke="#fff" stroke-width="3" class="ponto-circulo" opacity="0.95"/>
+    <circle cx="82" cy="270" r="14" fill="none" stroke="#fff" stroke-width="1" opacity="0.4"/>
+    <text x="82" y="275" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="10" font-weight="700" fill="#fff" pointer-events="none">INT</text>
+  </g>
+
+  <!-- Valores nos pontos -->
+  <g id="valores-sulco" font-family="Segoe UI, sans-serif" font-size="13" font-weight="700">
+    <text id="valor-externo" x="318" y="312" text-anchor="middle" fill="#1e40af">-- mm</text>
+    <text id="valor-central" x="200" y="128" text-anchor="middle" fill="#166534">-- mm</text>
+    <text id="valor-interno" x="82" y="312" text-anchor="middle" fill="#b45309">-- mm</text>
+  </g>
+
+  <!-- Legenda -->
+  <g font-family="Segoe UI, sans-serif" font-size="11" fill="#475569">
+    <rect x="20" y="440" width="360" height="50" rx="6" fill="#fff" stroke="#e2e8f0"/>
+    <circle cx="45" cy="458" r="6" fill="#3b82f6"/><text x="58" y="462">Externo (ombro)</text>
+    <circle cx="145" cy="458" r="6" fill="#22c55e"/><text x="158" y="462">Central</text>
+    <circle cx="235" cy="458" r="6" fill="#f59e0b"/><text x="248" y="462">Interno (ombro)</text>
+    <text x="45" y="478" font-size="10" fill="#94a3b8">Clique nos pontos para registrar a profundidade do sulco</text>
+  </g>
+
+  <!-- Refer&#234;ncia legal -->
+  <g transform="translate(318, 400)">
+    <rect x="-4" y="0" width="8" height="28" rx="2" fill="#ef4444" opacity="0.85"/>
+    <text x="12" y="14" font-family="Segoe UI, sans-serif" font-size="10" font-weight="600" fill="#ef4444">1.6 mm</text>
+    <text x="12" y="26" font-family="Segoe UI, sans-serif" font-size="9" fill="#94a3b8">m&#237;n. legal</text>
+  </g>
+</svg>
