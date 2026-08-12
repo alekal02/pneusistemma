@@ -29,11 +29,17 @@ if (!fs.existsSync(config.dataDir)) {
 
 app.use(cors({
   origin: (origin, cb) => {
-    // Dev: libera localhost e IPs da rede local (acesso pelo celular)
-    if (!origin || config.nodeEnv !== 'production') {
+    // Sem Origin (curl, health checks, webhooks server-to-server)
+    if (!origin) return cb(null, true);
+    // Dev: libera tudo
+    if (config.nodeEnv !== 'production') return cb(null, true);
+
+    const normalized = origin.replace(/\/$/, '');
+    if (config.corsOrigins.includes(normalized)) return cb(null, true);
+    // Previews da Vercel (opcional)
+    if (config.allowVercelPreviews && /\.vercel\.app$/i.test(normalized)) {
       return cb(null, true);
     }
-    if (origin === config.corsOrigin) return cb(null, true);
     return cb(null, false);
   },
   credentials: true,
@@ -90,7 +96,7 @@ app.listen(config.port, config.host, () => {
   console.log('========================================');
   console.log(`  Ambiente: ${config.nodeEnv}`);
   console.log(`  API: http://${config.host === '0.0.0.0' ? 'localhost' : config.host}:${config.port}/api`);
-  console.log(`  CORS: ${config.corsOrigin}`);
+  console.log(`  CORS: ${config.corsOrigins.join(', ')}`);
   console.log(`  Frontend links: ${config.frontendUrl}`);
   console.log(`  WuzAPI: ${config.wuzapiBaseUrl}${config.wuzapiToken ? ' (token ok)' : ' (sem token)'}`);
   console.log(`  Banco: ${config.dbPath}`);
