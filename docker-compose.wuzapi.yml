@@ -1,0 +1,45 @@
+# WuzAPI local para o PneuSistemma (QR / grupos / alertas WhatsApp)
+# Uso: docker compose -f docker-compose.wuzapi.yml up -d
+# Dashboard: http://localhost:8080/dashboard  (admin: 1234ABCD)
+
+services:
+  wuzapi-db:
+    image: postgres:16-alpine
+    container_name: pneusistemma-wuzapi-db
+    environment:
+      POSTGRES_USER: wuzapi
+      POSTGRES_PASSWORD: wuzapi
+      POSTGRES_DB: wuzapi
+    volumes:
+      - wuzapi_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U wuzapi -d wuzapi']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  wuzapi:
+    image: asternic/wuzapi:latest
+    container_name: pneusistemma-wuzapi
+    depends_on:
+      wuzapi-db:
+        condition: service_healthy
+    ports:
+      - '8080:8080'
+    environment:
+      TZ: America/Sao_Paulo
+      DB_HOST: wuzapi-db
+      DB_PORT: 5432
+      DB_USER: wuzapi
+      DB_PASSWORD: wuzapi
+      DB_NAME: wuzapi
+      WUZAPI_ADMIN_TOKEN: 1234ABCD
+      WUZAPI_GLOBAL_ENCRYPTION_KEY: wuzapi-pneusistemma-aes256-key-32!
+      WUZAPI_GLOBAL_HMAC_KEY: wuzapi-pneusistemma-hmac-key-min-32chars!
+      SESSION_DEVICE_NAME: PneuSistemma
+      WEBHOOK_FORMAT: json
+    restart: unless-stopped
+
+volumes:
+  wuzapi_pgdata:
