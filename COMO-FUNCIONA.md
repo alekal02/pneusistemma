@@ -24,7 +24,7 @@ Monorepo com frontend e backend separados:
 
 ```
 pneusistemma/
-├── backend/     → API REST (Node.js + Express + SQLite)
+├── backend/     → API REST (Node.js + Express + PostgreSQL)
 ├── frontend/    → Interface web (Vite + HTML/CSS/JS)
 └── package.json → Scripts para instalar e rodar os dois juntos
 ```
@@ -33,14 +33,14 @@ pneusistemma/
 |-----------|------------------------------------|--------------------------------------------|
 | Frontend  | Vite, HTML, CSS, JavaScript        | Telas, diagrama do truck, marcação no pneu |
 | Backend   | Express (ESM), JWT, bcrypt         | Autenticação, regras de negócio, API       |
-| Banco     | SQLite (`node:sqlite`, modo WAL)   | Persistência local em arquivo              |
+| Banco     | PostgreSQL (`pg`)                  | Persistência (local Docker / Render)       |
 
 Fluxo típico:
 
 1. O navegador abre o frontend (`localhost:5173` em dev).
 2. O usuário faz login; o token JWT fica no `localStorage`.
 3. As telas chamam a API em `/api/...` (proxy do Vite ou `VITE_API_URL`).
-4. O backend valida o token, aplica o escopo da **filial** e lê/grava o SQLite.
+4. O backend valida o token, aplica o escopo da **filial** e lê/grava o PostgreSQL.
 
 ---
 
@@ -173,7 +173,7 @@ backend/
 ├── server.js              # Express: CORS, rotas, health
 ├── src/
 │   ├── config.js          # .env (porta, DB, JWT, limites)
-│   ├── database.js        # Schema SQLite + seed/migrações
+│   ├── database.js        # Schema PostgreSQL + seed/migrações
 │   ├── auth.js            # JWT, bcrypt, escopo de filial
 │   ├── limites.js         # Leitura/gravação de thresholds
 │   ├── diagnostico.js     # Perfil de desgaste + ações
@@ -186,7 +186,7 @@ backend/
 │       ├── medicoes.js
 │       ├── configuracoes.js
 │       └── dashboard.js
-├── data/                  # Arquivo SQLite (gerado)
+├── data/                  # Legado (banco agora é PostgreSQL)
 └── deploy/                # PM2, nginx, guia DigitalOcean
 ```
 
@@ -213,7 +213,7 @@ backend/
 - `movimentacoes` — linha do tempo do pneu  
 - `configuracoes` — chave/valor dos limites  
 
-O SQLite é criado/migrado ao subir a API (`database.js`).
+O PostgreSQL é criado/migrado ao subir a API (`database.js`).
 
 ---
 
@@ -288,7 +288,7 @@ npm run dev:api
 npm run dev:web
 ```
 
-Requisitos: **Node.js ≥ 22** no backend (usa `node:sqlite`).
+Requisitos: **Node.js ≥ 18** no backend e **PostgreSQL** (`DATABASE_URL`).
 
 ---
 
@@ -300,7 +300,7 @@ Requisitos: **Node.js ≥ 22** no backend (usa `node:sqlite`).
 
 Detalhes: `backend/deploy/DEPLOY.md`.
 
-Variáveis importantes do backend em produção: `JWT_SECRET`, `ADMIN_PASSWORD`, `CORS_ORIGIN`, `DB_PATH`, limites de sulco.
+Variáveis importantes do backend em produção: `DATABASE_URL`, `JWT_SECRET`, `ADMIN_PASSWORD`, `CORS_ORIGIN`, limites de sulco.
 
 ---
 

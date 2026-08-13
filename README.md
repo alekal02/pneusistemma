@@ -3,7 +3,7 @@
 Sistema para controle de desgaste de pneus da frota de limpeza urbana.
 
 **Arquitetura separada:**
-- `backend/` — API REST (Node.js + Express + SQLite)
+- `backend/` — API REST (Node.js + Express + PostgreSQL)
 - `frontend/` — Interface web (Vite + HTML/CSS/JS)
 
 ## Desenvolvimento local
@@ -42,7 +42,7 @@ pneu-main/
 │   │   ├── config.js
 │   │   ├── database.js
 │   │   └── routes/
-│   ├── data/               # SQLite
+│   ├── data/               # (legado; banco agora é PostgreSQL)
 │   └── deploy/             # PM2, nginx, guia Digital Ocean
 ├── frontend/
 │   ├── index.html

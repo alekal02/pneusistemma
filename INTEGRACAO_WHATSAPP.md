@@ -72,7 +72,7 @@ curl -X POST http://localhost:8080/webhook   -H "token: $WUZAPI_TOKEN"   -H "Con
 
 ---
 
-## 3. ALTERAÇÕES NO BANCO DE DADOS (SQLite)
+## 3. ALTERAÇÕES NO BANCO DE DADOS (PostgreSQL)
 
 ### 3.1 Novas colunas na tabela `usuarios`
 
