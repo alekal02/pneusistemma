@@ -1,0 +1,23 @@
+---
+description: Repositórios reais de deploy (Vercel e Render) — não usar o monorepo origin
+alwaysApply: true
+---
+
+# Deploy GitHub (Vercel + Render)
+
+Este workspace (`pneusistemma`) é o **monorepo local**. Vercel e Render **não** estão ligados a `alekal02/pneusistemma`.
+
+| Destino | Repositório | Pasta local |
+|---|---|---|
+| Vercel (frontend) | https://github.com/alekal02/pneusistemma-frontend | `frontend/` |
+| Render (backend) | https://github.com/alekal02/pneusistemma-backend | `backend/` |
+
+Remotes locais: `origin` = monorepo; `frontend` = Vercel; `backend` = Render.
+
+Quando o usuário pedir para **subir / publicar / deploy**:
+
+1. Commit no monorepo (`origin`) se fizer sentido.
+2. **Obrigatório:** enviar as pastas para os repositórios de deploy com `powershell -File scripts/push-deploy.ps1` (ou o equivalente: clonar o split repo, copiar a pasta, commit, push em `main`).
+3. Não fazer `git push origin` esperando deploy na Vercel — isso não dispara o projeto vinculado.
+4. Diagnóstico de sulco/status roda no **backend (Render)**. Mudança só em `backend/` exige push em `pneusistemma-backend`.
+5. UI/cores/textos em `frontend/` exigem push em `pneusistemma-frontend`.
