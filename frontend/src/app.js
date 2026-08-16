@@ -316,7 +316,15 @@ function showView(name) {
   });
 }
 
+function finalizarBootVisual() {
+  document.documentElement.classList.add('app-ready');
+  document.documentElement.classList.remove('session-pending');
+  document.getElementById('app-boot')?.setAttribute('aria-busy', 'false');
+}
+
 function showLogin() {
+  document.documentElement.classList.remove('session-pending', 'app-ready');
+  document.getElementById('app-boot')?.setAttribute('aria-busy', 'false');
   document.getElementById('app-login').classList.remove('hidden');
   document.getElementById('app-shell').classList.add('hidden');
 }
@@ -324,6 +332,7 @@ function showLogin() {
 function showAppShell() {
   document.getElementById('app-login').classList.add('hidden');
   document.getElementById('app-shell').classList.remove('hidden');
+  finalizarBootVisual();
 
   const navFilial = document.getElementById('nav-tabs-filial');
   const navAdmin = document.getElementById('nav-tabs-admin');
@@ -4552,10 +4561,13 @@ async function init() {
   if (saved?.token && saved?.usuario) {
     authToken = saved.token;
     currentUser = saved.usuario;
+    // Mostra o app na hora com o usuário em cache — evita flash do login
+    showAppShell();
     try {
       const me = await fetchJSON(`${API}/auth/me`);
       currentUser = me;
       saveAuth(authToken, me);
+      showAppShell(); // atualiza header/nav com dados frescos
       await bootApp();
       return;
     } catch {
