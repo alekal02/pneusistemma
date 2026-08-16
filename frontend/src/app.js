@@ -3146,8 +3146,10 @@ function wireFilialChatbotPanel(filialId, nomeFilial) {
   let salvandoChipAuto = false;
 
   const lerAlertasSelecionados = () => {
-    const checks = [...document.querySelectorAll('#fc-alerta-lista input[type="checkbox"][data-valor]:checked')];
-    if (checks.length) return checks.map((c) => c.dataset.valor).filter(Boolean);
+    const todos = [...document.querySelectorAll('#fc-alerta-lista input[type="checkbox"][data-valor]')];
+    if (todos.length) {
+      return todos.filter((c) => c.checked).map((c) => c.dataset.valor).filter(Boolean);
+    }
     const hidden = valorCampoWa(document.getElementById('fc-whatsapp-alerta')?.value);
     return hidden ? hidden.split(/[,;\n]+/).map((s) => s.trim()).filter(Boolean) : [];
   };
