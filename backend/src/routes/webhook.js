@@ -1,5 +1,5 @@
-﻿/**
- * Webhook WuzAPI ÔÇö placa ÔåÆ link de medi├º├úo
+/**
+ * Webhook WuzAPI — placa → link de medição
  * Aceita chat privado ou grupo cadastrado na filial.
  */
 import { Router } from 'express';
@@ -11,7 +11,7 @@ import { processarMensagemMenu, textoMenu } from '../services/whatsapp-menu.js';
 
 const router = Router();
 
-/** Rate limit simples: max 30 req/min por remetente (n├úo pelo grupo inteiro) */
+/** Rate limit simples: max 30 req/min por remetente (não pelo grupo inteiro) */
 const rateBuckets = new Map();
 
 function rateLimitOk(key) {
@@ -40,8 +40,8 @@ function validarHmacWebhook(req) {
 
   const signature = req.headers['x-hmac-signature'] || req.headers['x-hub-signature'];
   if (!signature) {
-    // Secret no .env sem HMAC ativo no WuzAPI ÔÇö n├úo bloquear o fluxo placaÔåÆlink
-    console.warn('[webhook] HMAC configurado mas assinatura ausente ÔÇö aceitando mensagem');
+    // Secret no .env sem HMAC ativo no WuzAPI — não bloquear o fluxo placa→link
+    console.warn('[webhook] HMAC configurado mas assinatura ausente — aceitando mensagem');
     return true;
   }
 
@@ -89,16 +89,16 @@ function ehMensagemPropria(event) {
   return flags.some((v) => v === true || v === 'true' || v === 1 || v === '1');
 }
 
-/** Ignora eco do bot; permite testar placa/comando pelo pr├│prio chip */
+/** Ignora eco do bot; permite testar placa/comando pelo próprio chip */
 function deveIgnorarMensagemPropria(event) {
   if (!ehMensagemPropria(event)) return false;
   const text = String(extrairTextoMensagem(event) || '').trim();
   if (!text) return true;
   // Eco das respostas do sistema
-  if (/Abrir medi|Link v[a├í]lido|ALERTA DE PNEU|Frota cadastrada|Frota completa|n[a├ú]o encontrada|relat[o├│]rio gerencial|Gerando o \*relat|PneuSistemma ÔÇö Menu|Confirma /i.test(text)) {
+  if (/Abrir medi|Link v[aá]lido|ALERTA DE PNEU|Frota cadastrada|Frota completa|n[aã]o encontrada|relat[oó]rio gerencial|Gerando o \*relat|PneuSistemma — Menu|Confirma /i.test(text)) {
     return true;
   }
-  // Comandos e placa pura ÔåÆ processa mesmo se fromMe
+  // Comandos e placa pura → processa mesmo se fromMe
   const cmd = text.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '');
   if (/^(frota|placas|lista|ajuda|help|menu|\?|cancelar|cancela|sair|voltar)$/i.test(cmd)) return false;
   if (/^(relatorio|report|pdf)\b/i.test(cmd)) return false;
@@ -201,7 +201,7 @@ function ehMensagemDeGrupo(event) {
   return String(jid).includes('@g.us');
 }
 
-/** Resolve canal da unidade a partir do chat (grupo ou n├║mero do chatbot) */
+/** Resolve canal da unidade a partir do chat (grupo ou número do chatbot) */
 async function resolverCanalFilial(db, chatJid, phone, filialIdHint = null) {
   let sql = `
     SELECT id, nome, codigo, whatsapp, whatsapp_grupo, wuzapi_token
@@ -226,7 +226,7 @@ async function resolverCanalFilial(db, chatJid, phone, filialIdHint = null) {
   for (const f of filiais) {
     if (f.whatsapp_grupo) {
       if (jidsGrupoIguais(f.whatsapp_grupo, chatJid)) {
-        // Sempre responde no chat da mensagem (JID atual), n├úo no valor antigo salvo
+        // Sempre responde no chat da mensagem (JID atual), não no valor antigo salvo
         const replyTo = chatNorm?.phone
           || normalizarDestino(chatJid)?.phone
           || normalizarDestino(f.whatsapp_grupo)?.phone;
@@ -242,7 +242,7 @@ async function resolverCanalFilial(db, chatJid, phone, filialIdHint = null) {
     }
   }
 
-  // Webhook veio com ?filial_id= ÔÇö escopo for├ºado mesmo sem match de grupo
+  // Webhook veio com ?filial_id= — escopo forçado mesmo sem match de grupo
   if (filialIdHint && filiais[0]) {
     const f = filiais[0];
     const replyTo = chatNorm?.isGroup
@@ -259,11 +259,11 @@ async function resolverCanalFilial(db, chatJid, phone, filialIdHint = null) {
 router.post('/whatsapp', async (req, res) => {
   try {
     if (!validarHmacWebhook(req)) {
-      return res.status(401).json({ erro: 'Assinatura HMAC inv├ílida' });
+      return res.status(401).json({ erro: 'Assinatura HMAC inválida' });
     }
 
     const event = req.body || {};
-    // WuzAPI envia type:"Message" e event:<objeto>; n├úo usar event.event como nome
+    // WuzAPI envia type:"Message" e event:<objeto>; não usar event.event como nome
     const eventName = event.type || event.Event
       || (typeof event.event === 'string' ? event.event : '')
       || '';
@@ -308,7 +308,7 @@ router.post('/whatsapp', async (req, res) => {
     const filialIdHint = Number(req.query.filial_id) || null;
     const canal = await resolverCanalFilial(db, chatJid, phone, filialIdHint);
 
-    // Grupo n├úo cadastrado em nenhuma filial ÔåÆ ignora
+    // Grupo não cadastrado em nenhuma filial → ignora
     if (isGroup && !canal) {
       console.warn('[webhook] grupo sem filial cadastrada:', chatJid, 'hint=', filialIdHint);
       return res.status(200).json({
@@ -326,14 +326,14 @@ router.post('/whatsapp', async (req, res) => {
     // Em grupo, prioriza o JID do chat da mensagem (mais atual que o valor salvo)
     const destinoEnvio = (isGroup && chatJid) ? chatJid : replyTo;
 
-    // Rate limit por remetente (n├úo pelo grupo ÔÇö evita bloquear a frota inteira)
+    // Rate limit por remetente (não pelo grupo — evita bloquear a frota inteira)
     const rateKey = phone || destinoEnvio;
     if (!rateLimitOk(rateKey)) {
       console.warn(`[webhook] Rate limit: ${rateKey}`);
       await enviarERegistrar({
         tipo: 'link_veiculo',
         destinatario: destinoEnvio,
-        mensagem: 'ÔÅ│ Muitas consultas em pouco tempo. Aguarde 1 minuto e envie a placa novamente.',
+        mensagem: '⏳ Muitas consultas em pouco tempo. Aguarde 1 minuto e envie a placa novamente.',
         filialId: canal?.escopoFilialId || null,
         fallbackDestinatario: phone,
       });
@@ -342,7 +342,7 @@ router.post('/whatsapp', async (req, res) => {
 
     const texto = String(body || '').trim();
 
-    // Menu numerado + fluxos A/B/C (medir, cadastros, troca, recap, descarte, relat├│rioÔÇª)
+    // Menu numerado + fluxos A/B/C (medir, cadastros, troca, recap, descarte, relatório…)
     res.status(200).json({ ok: true, aceito: true, via: 'menu' });
     processarMensagemMenu({
       texto,
@@ -362,7 +362,7 @@ router.post('/whatsapp', async (req, res) => {
       return enviarERegistrar({
         tipo: 'link_veiculo',
         destinatario: destinoEnvio,
-        mensagem: `N├úo entendi.\n\n${textoMenu()}`,
+        mensagem: `Não entendi.\n\n${textoMenu()}`,
         filialId: canal?.escopoFilialId || null,
         fallbackDestinatario: phone,
       });
@@ -371,7 +371,7 @@ router.post('/whatsapp', async (req, res) => {
       enviarERegistrar({
         tipo: 'link_veiculo',
         destinatario: destinoEnvio,
-        mensagem: `ÔØî Erro: ${err.message}\n\nDigite *menu*.`,
+        mensagem: `❌ Erro: ${err.message}\n\nDigite *menu*.`,
         filialId: canal?.escopoFilialId || null,
         fallbackDestinatario: phone,
       }).catch(() => {});
