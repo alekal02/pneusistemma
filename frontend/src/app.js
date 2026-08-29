@@ -3071,6 +3071,7 @@ async function loadFiliais() {
           <div class="filial-card-actions">
             <button type="button" class="btn btn-sm btn-primary btn-abrir-filial" data-id="${f.id}">Abrir</button>
             <button type="button" class="btn btn-sm btn-ghost btn-editar-filial" data-id="${f.id}">Editar / senha</button>
+            ${isAdmin() ? `<button type="button" class="btn btn-sm btn-ghost btn-limpar-frota-filial" data-id="${f.id}" data-nome="${escapeHtml(f.nome)}">Limpar frota</button>` : ''}
           </div>
         </div>
       `;
@@ -3080,6 +3081,7 @@ async function loadFiliais() {
     lista.querySelectorAll('.filial-card[data-id]').forEach((card) => {
       card.addEventListener('click', (e) => {
         if (e.target.closest('.btn-editar-filial')) return;
+        if (e.target.closest('.btn-limpar-frota-filial')) return;
         abrir(card.dataset.id);
       });
       card.addEventListener('keydown', (e) => {
@@ -3099,6 +3101,25 @@ async function loadFiliais() {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         abrirModalFilial(btn.dataset.id);
+      });
+    });
+    lista.querySelectorAll('.btn-limpar-frota-filial').forEach((btn) => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const nome = btn.dataset.nome || 'esta filial';
+        if (!confirm(`Apagar TODOS os caminhões, pneus e histórico de ${nome}?\n\nLogin e WhatsApp da unidade ficam. Não dá para desfazer.`)) {
+          return;
+        }
+        try {
+          const data = await fetchJSON(`${API}/filiais/${btn.dataset.id}/limpar-frota`, {
+            method: 'POST',
+            body: '{}',
+          });
+          toast(data.mensagem || `Frota de ${nome} limpa`, 'success');
+          await loadFiliais();
+        } catch (err) {
+          toast(err.message, 'error');
+        }
       });
     });
   } catch (err) {

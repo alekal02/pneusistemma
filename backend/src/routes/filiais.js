@@ -21,6 +21,7 @@ import {
   labelTipoPneu,
 } from '../pneus-layouts.js';
 import { normalizarDiaMedicao } from '../dia-medicao.js';
+import { limparFrotaFilial } from '../services/limpar-filial.js';
 
 const router = Router();
 
@@ -906,6 +907,20 @@ router.post('/:id/reset-senha', async (req, res, next) => {
 
     res.json({ mensagem: 'Senha da filial atualizada' });
   } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/:id/limpar-frota', requireAdmin, async (req, res, next) => {
+  try {
+    const db = getDb();
+    const resultado = await limparFrotaFilial(db, req.params.id);
+    res.json({
+      mensagem: `Frota de ${resultado.filial.nome} (${resultado.filial.codigo}) limpa. Login e WhatsApp da unidade foram mantidos.`,
+      ...resultado,
+    });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ erro: err.message });
     next(err);
   }
 });

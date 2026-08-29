@@ -227,6 +227,39 @@ async function ensureNotificacoesTipoRelatorio() {
   }
 }
 
+/** Uma vez: zera caminhões/pneus/histórico só da filial Belo Horizonte. Mantém login e WhatsApp. */
+async function limpezaUnicaFrotaBeloHorizonte(db) {
+  const chave = 'limpeza_frota_bh_20260829';
+  const ja = await db.prepare('SELECT valor FROM configuracoes WHERE chave = ?').get(chave);
+  if (String(ja?.valor || '') === 'ok') return;
+
+  const hits = await db.prepare(`
+    SELECT id, nome, codigo FROM filiais
+    WHERE LOWER(nome) LIKE '%belo horizonte%'
+       OR UPPER(REPLACE(codigo, ' ', '')) IN ('BH', 'BHZ', 'BELHORIZONTE', 'BELOHORIZONTE')
+  `).all();
+
+  if (hits.length !== 1) {
+    console.warn(
+      '[database] limpeza BH ignorada — filiais encontradas:',
+      hits.map((h) => `${h.id}:${h.codigo}`).join(', ') || 'nenhuma'
+    );
+    return;
+  }
+
+  const { limparFrotaFilial } = await import('./services/limpar-filial.js');
+  const r = await limparFrotaFilial(db, hits[0].id);
+  try {
+    await db.prepare(`INSERT INTO configuracoes (chave, valor) VALUES (?, ?)`).run(chave, 'ok');
+  } catch {
+    await db.prepare(`UPDATE configuracoes SET valor = 'ok', updated_at = NOW() WHERE chave = ?`).run(chave);
+  }
+  console.log(
+    `[database] frota BH limpa: ${r.filial.nome} (${r.filial.codigo})`,
+    r.antes
+  );
+}
+
 async function seedConfigs() {
   const insertIgnore = db.prepare(`
     INSERT INTO configuracoes (chave, valor) VALUES (?, ?)
@@ -424,6 +457,12 @@ export async function initDatabase() {
     await corrigirEncodingBanco(db);
   } catch (err) {
     console.warn('[database] encoding:', err.message);
+  }
+
+  try {
+    await limpezaUnicaFrotaBeloHorizonte(db);
+  } catch (err) {
+    console.warn('[database] limpeza BH:', err.message);
   }
 
   ready = true;
