@@ -881,7 +881,7 @@ async function openVeiculoDetalhe(id, origem = 'dashboard', dadosPreload = null)
         banner.classList.remove('hidden');
         banner.innerHTML = `
           <strong>Modo campo (WhatsApp)</strong>
-          <span>Toque no pneu para medir · ao concluir, volta ao desenho para o próximo</span>
+          <span>Toque no pneu para medir, enviar à recap, estoque ou descarte</span>
           <span id="truck-campo-resumo">${resumoSessaoCampo()}</span>`;
       } else if (v.pneus.length === 0) {
         banner.classList.remove('hidden');
