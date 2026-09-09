@@ -2075,7 +2075,7 @@ function setTipoCondicaoEditaveis(editavel) {
   }
   if (hintCond) {
     hintCond.textContent = editavel
-      ? 'Não muda depois (exceto via Registrar recap)'
+      ? 'Novo ou recapado — pode corrigir na edição'
       : 'Condição fixa — use Registrar recap';
   }
 }
@@ -2113,7 +2113,7 @@ async function abrirModalPneu(id) {
     if (avancado) {
       avancado.open = !!(p.dot || p.medida || p.sulco_inicial_mm || (p.vida_recap > 0));
     }
-    setTipoCondicaoEditaveis(false);
+    setTipoCondicaoEditaveis(true);
     document.getElementById('modal-pneu').showModal();
   } catch (err) {
     toast(err.message, 'error');
@@ -2157,10 +2157,8 @@ document.getElementById('form-pneu')?.addEventListener('submit', async (e) => {
   if (!payload.modelo?.trim()) {
     return toast('Informe o modelo do pneu', 'error');
   }
-  if (!id) {
-    payload.tipo_pneu = document.getElementById('pneu-tipo').value;
-    payload.condicao = document.getElementById('pneu-condicao').value;
-  }
+  payload.tipo_pneu = document.getElementById('pneu-tipo').value;
+  payload.condicao = document.getElementById('pneu-condicao').value;
   try {
     if (id) {
       await fetchJSON(`${API}/pneus/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
