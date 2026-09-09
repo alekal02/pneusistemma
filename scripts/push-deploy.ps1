@@ -33,7 +33,7 @@ function Sync-SplitRepo {
   if ($LASTEXITCODE -ne 0) { throw "Falha ao clonar $RepoUrl" }
 
   $xd = @(".git", "node_modules", "dist") + $ExcludeDirs
-  $robocopyArgs = @($Src, $tmp, "/E", "/XF", ".env", "/NFL", "/NDL", "/NJH", "/NJS")
+  $robocopyArgs = @($Src, $tmp, "/E", "/XF", ".env", "e2e-frota-chatbot.mjs", "limpar-dados-e2e.mjs", "seed-bh-teste.mjs", "/NFL", "/NDL", "/NJH", "/NJS")
   foreach ($d in $xd) { $robocopyArgs += @("/XD", $d) }
   & robocopy @robocopyArgs | Out-Null
   if ($LASTEXITCODE -ge 8) { throw "Falha ao copiar arquivos de $Src" }
