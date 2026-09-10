@@ -132,7 +132,7 @@ async function wuzapiFetch(path, { method = 'GET', body, token, timeoutMs = 12_0
     err.upstreamStatus = upstream;
     err.data = data;
     if (upstream === 401 || upstream === 403) {
-      err.message = 'Token WuzAPI inválido ou sem permissão. Clique em “Gerar token” no painel WhatsApp (WuzAPI precisa estar no ar: npm run wuzapi:up).';
+      err.message = 'Token WuzAPI inválido ou sem permissão. Clique em “Gerar de novo” e depois em Conectar / QR.';
     }
     throw err;
   }
@@ -780,18 +780,62 @@ router.post('/filial/:id/connect', requireChatbotAcesso, async (req, res) => {
     if (!assertFilialNoEscopo(req, req.params.id)) {
       return res.status(403).json({ erro: 'Filial fora do seu escopo' });
     }
-    const f = await filialOuErro(req.params.id);
-    const token = await tokenWuzapiFilial(f.id, { permitirEnv: false });
+    let f = await filialOuErro(req.params.id);
+    let token = await tokenWuzapiFilial(f.id, { permitirEnv: false });
+
+    // Se o chip já está no ar, não mexe no token — evita derrubar unidade em uso.
+    if (token) {
+      try {
+        const ja = await statusSessao(token, { filial_id: f.id, nome: f.nome });
+        if (ja.loggedIn) {
+          const webhook = await garantirWebhook(token, f.id);
+          return res.json({
+            mensagem: `Chatbot “${f.nome}” já está conectado`,
+            webhook,
+            ...ja,
+            qrcode: '',
+            tem_qr: false,
+          });
+        }
+      } catch {
+        // Sessão inacessível — segue para QR / reparo
+      }
+    }
+
+    if (!token) {
+      const garantia = await garantirTokenExclusivoFilial(f);
+      f = await filialOuErro(req.params.id);
+      token = garantia.token || await tokenWuzapiFilial(f.id, { permitirEnv: false });
+    }
+
     if (!token) {
       return res.status(400).json({
         erro: 'Gere o token desta unidade antes de conectar (cada filial tem sua própria sessão)',
       });
     }
 
-    const status = await conectarEObterQr(token, {
-      filial_id: f.id,
-      nome: f.nome,
-    });
+    let status;
+    try {
+      status = await conectarEObterQr(token, {
+        filial_id: f.id,
+        nome: f.nome,
+      });
+    } catch (err) {
+      // Token órfão / 401 → gera outro e tenta o QR, sem apagar número/grupo.
+      if (err.upstreamStatus === 401 || err.upstreamStatus === 403 || err.status === 502) {
+        const reparo = await garantirTokenExclusivoFilial(f, { forcarNovo: true });
+        f = await filialOuErro(req.params.id);
+        token = reparo.token || await tokenWuzapiFilial(f.id, { permitirEnv: false });
+        if (!token) throw err;
+        status = await conectarEObterQr(token, {
+          filial_id: f.id,
+          nome: f.nome,
+        });
+      } else {
+        throw err;
+      }
+    }
+
     const webhook = await garantirWebhook(token, f.id);
 
     let mensagem = `Conexão do chatbot “${f.nome}” iniciada — escaneie o QR`;

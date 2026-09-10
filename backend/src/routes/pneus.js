@@ -634,6 +634,7 @@ router.get('/:id', async (req, res, next) => {
 router.put('/:id', async (req, res, next) => {
   const {
     marca, modelo, medida, dot, numero_fogo,
+    tipo_pneu, condicao,
     vida_recap, sulco_inicial_mm,
     data_instalacao, km_instalacao, observacoes,
     custo, nota_fiscal,
@@ -648,11 +649,13 @@ router.put('/:id', async (req, res, next) => {
   }
   if (!atual) return res.status(404).json({ erro: 'Pneu não encontrado' });
 
-  if (req.body.tipo_pneu != null && req.body.tipo_pneu !== atual.tipo_pneu) {
-    return res.status(400).json({ erro: 'Padrão do pneu não pode ser alterado após o cadastro' });
+  const tipoFinal = tipo_pneu != null ? mapTipoPneu(tipo_pneu) : atual.tipo_pneu;
+  const condFinal = condicao != null ? mapCondicao(condicao) : atual.condicao;
+  if (!TIPOS_PNEU.includes(tipoFinal)) {
+    return res.status(400).json({ erro: `Padrão inválido. Use: ${TIPOS_PNEU.join(', ')}` });
   }
-  if (req.body.condicao != null && req.body.condicao !== atual.condicao) {
-    return res.status(400).json({ erro: 'Condição do pneu não pode ser alterada (use Registrar recap)' });
+  if (!CONDICOES_PNEU.includes(condFinal)) {
+    return res.status(400).json({ erro: `Condição inválida. Use: ${CONDICOES_PNEU.join(', ')}` });
   }
 
   const modeloFinal = modelo != null ? String(modelo).trim() : atual.modelo;
@@ -686,6 +689,8 @@ router.put('/:id', async (req, res, next) => {
         medida = ?,
         dot = ?,
         numero_fogo = ?,
+        tipo_pneu = ?,
+        condicao = ?,
         vida_recap = COALESCE(?, vida_recap),
         sulco_inicial_mm = COALESCE(?, sulco_inicial_mm),
         data_instalacao = COALESCE(?, data_instalacao),
@@ -700,6 +705,8 @@ router.put('/:id', async (req, res, next) => {
       medida?.trim() || null,
       dot?.trim() || null,
       fogo || null,
+      tipoFinal,
+      condFinal,
       vida_recap != null ? parseInt(vida_recap, 10) : null,
       sulco_inicial_mm != null ? parseFloat(sulco_inicial_mm) : null,
       data_instalacao || null,
