@@ -427,6 +427,7 @@ function mostrarRodizioSugestao(pneuOuResult) {
 }
 
 function showView(name) {
+  if (name !== 'chatbot') stopWaPoll();
   document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
   const el = document.getElementById(`view-${name}`);
   if (el) el.classList.add('active');
@@ -3210,11 +3211,20 @@ document.getElementById('btn-salvar-config')?.addEventListener('click', async ()
 
 let waPollTimer = null;
 let waPollFilialId = null;
+let waStatusWatchTimer = null;
 
-function stopWaPoll() {
+function stopWaQrPoll() {
   if (waPollTimer) {
     clearInterval(waPollTimer);
     waPollTimer = null;
+  }
+}
+
+function stopWaPoll() {
+  stopWaQrPoll();
+  if (waStatusWatchTimer) {
+    clearInterval(waStatusWatchTimer);
+    waStatusWatchTimer = null;
   }
   waPollFilialId = null;
 }
@@ -3246,7 +3256,7 @@ function mostrarQrFilial(data, nomeFilial) {
 
   if (data?.loggedIn) {
     wrap?.classList.add('hidden');
-    stopWaPoll();
+    stopWaQrPoll();
     return;
   }
 
@@ -3271,28 +3281,36 @@ function mostrarQrFilial(data, nomeFilial) {
 }
 
 function startWaPollFilial(filialId, nome) {
-  stopWaPoll();
+  stopWaQrPoll();
   waPollFilialId = filialId;
   waPollTimer = setInterval(async () => {
     try {
       if (Number(waPollFilialId) !== Number(filialId)) return;
-      const data = await fetchJSON(`${API}/whatsapp/filial/${filialId}/status`);
+      const data = await fetchJSON(`${API}/whatsapp/filial/${filialId}/status?qr=1`);
       if (data.filial_id != null && Number(data.filial_id) !== Number(filialId)) return;
       if (data.qrcode || data.qr_erro) mostrarQrFilial(data, nome);
       if (data.loggedIn) {
         toast(`Chatbot ${nome} conectado!`, 'success');
         document.getElementById('fc-qr-wrap')?.classList.add('hidden');
         document.getElementById('wa-qr-wrap')?.classList.add('hidden');
-        stopWaPoll();
+        stopWaQrPoll();
         const statusEl = document.getElementById('fc-status');
+        const hero = document.getElementById('fc-hero');
+        hero?.classList.add('is-online');
+        hero?.classList.remove('is-off', 'is-wait', 'is-warn');
+        if (hero) hero.dataset.modo = 'is-online';
         if (statusEl) {
-          statusEl.className = 'badge badge-ok';
-          statusEl.textContent = 'Online';
+          statusEl.className = '';
+          statusEl.textContent = 'Conectado';
         }
         const detail = document.getElementById('fc-status-detail');
-        if (detail) detail.textContent = 'Chatbot conectado — escolha o grupo abaixo.';
-        document.getElementById('fc-step-connect')?.classList.add('is-done');
-        document.getElementById('fc-step-group')?.classList.add('is-active');
+        if (detail) detail.textContent = 'Chip no ar — escolha o grupo da medição abaixo.';
+        const btnConn = document.getElementById('btn-fc-conectar');
+        if (btnConn) {
+          btnConn.textContent = 'Atualizar status';
+          btnConn.classList.remove('btn-primary');
+          btnConn.classList.add('btn-ghost');
+        }
         const phone = String(data.phone || '').replace(/\D/g, '');
         const chipInput = document.getElementById('fc-whatsapp');
         if (phone.length >= 10 && chipInput) {
@@ -3302,11 +3320,14 @@ function startWaPollFilial(filialId, nome) {
             body: JSON.stringify({ whatsapp: phone }),
           }).catch(() => {});
         }
+        document.getElementById('chatbot-filial-panel')?.dispatchEvent(new CustomEvent('wa-chip-ok', {
+          detail: { phone },
+        }));
       }
     } catch {
       // ignore
     }
-  }, 1500);
+  }, 2500);
 }
 
 document.getElementById('btn-wa-qr-fechar')?.addEventListener('click', () => {
@@ -3906,130 +3927,112 @@ function renderChatbotPanelHtml(data) {
   const alerta = valorCampoWa(data.whatsapp_alerta);
   const temToken = Boolean(data.tem_wuzapi_token);
   const temGrupo = Boolean(grupoAtual);
+  const chipFmt = chip ? chip : 'ainda não informado';
   return `
-    <div class="filial-chatbot-panel cb-setup">
-      <header class="cb-hero">
-        <div class="cb-hero-text">
-          <p class="cb-kicker">Chatbot da unidade</p>
+    <div class="filial-chatbot-panel wa-panel">
+      <header class="wa-hero" id="fc-hero">
+        <div class="wa-hero-text">
+          <p class="cb-kicker">WhatsApp da unidade</p>
           <h3>${escapeHtml(data.nome || 'Unidade')}${data.codigo ? ` <span class="cb-code">${escapeHtml(data.codigo)}</span>` : ''}</h3>
-          <p class="hint cb-hero-hint">Placa no grupo → link de medição no celular do borracheiro.</p>
-        </div>
-        <div class="cb-status-card">
-          <span id="fc-status" class="badge badge-sem_dado">Status…</span>
-          <p class="hint" id="fc-status-detail">Verificando conexão…</p>
-          <div class="cb-status-actions">
-            <button type="button" class="btn btn-primary" id="btn-fc-conectar">Conectar / QR</button>
-            <button type="button" class="btn btn-ghost btn-sm" id="btn-fc-desconectar">Desconectar</button>
+          <div class="wa-live" id="fc-live">
+            <span class="wa-dot" aria-hidden="true"></span>
+            <span id="fc-status">Verificando…</span>
           </div>
+          <p class="hint" id="fc-status-detail">Consultando o chip…</p>
+          <p class="wa-chip-line" id="fc-chip-line">Chip: <strong>${escapeHtml(chipFmt)}</strong>${temGrupo ? ' · Grupo escolhido' : ' · Sem grupo'}</p>
+        </div>
+        <div class="wa-hero-actions">
+          <button type="button" class="btn btn-primary" id="btn-fc-conectar">Conectar chip</button>
+          <button type="button" class="btn btn-ghost${!chip && !temGrupo ? ' hidden' : ''}" id="btn-fc-desconectar">Trocar chip</button>
         </div>
       </header>
 
-      <ol class="cb-steps">
-        <li class="cb-step is-active" id="fc-step-connect">
-          <div class="cb-step-head">
-            <span class="cb-step-num">1</span>
-            <div>
-              <h4>Conectar o chip</h4>
-              <p class="hint">Gere o token (se precisar) e escaneie o QR com o WhatsApp do chip da unidade.</p>
-            </div>
-          </div>
-          <div class="cb-step-body">
-            <div class="form-row cb-token-row">
-              <div class="form-group" style="flex:1;margin:0">
-                <label for="fc-wuzapi-token">Token WuzAPI</label>
-                <input type="password" id="fc-wuzapi-token" placeholder="${temToken ? '•••• token já cadastrado — deixe em branco' : 'Clique em Gerar token'}" autocomplete="off">
-              </div>
-              <button type="button" class="btn btn-ghost btn-sm" id="btn-fc-gerar-token">${temToken ? 'Gerar de novo' : 'Gerar token'}</button>
-            </div>
-            <div class="form-group">
-              <label for="fc-whatsapp">Número do chip</label>
-              <input type="tel" id="fc-whatsapp" class="mono" value="${escapeHtml(chip)}" placeholder="Com DDI, ex.: 5562999999999" inputmode="tel" autocomplete="tel">
-              <small class="field-hint">Salva sozinho ao sair do campo. Se o QR conectar, o número do chip entra sozinho.</small>
-            </div>
-            <p class="hint" id="fc-wuzapi-hint">Servidor do chatbot precisa estar no ar. Depois: Gerar token → Conectar / QR.</p>
-            <div class="cb-qr-panel hidden" id="fc-qr-wrap">
-              <h4 id="fc-qr-titulo">Escaneie o QR Code</h4>
-              <p class="hint">No celular do chip: WhatsApp → Aparelhos conectados → Conectar um aparelho</p>
-              <p class="hint" id="fc-qr-status">Gerando QR Code…</p>
-              <img id="fc-qr-img" class="wa-qr-img hidden" alt="QR Code WhatsApp">
-              <p class="hint">O QR expira em poucos segundos — clique em Conectar de novo se precisar.</p>
-              <button type="button" class="btn btn-ghost btn-sm" id="btn-fc-qr-fechar">Fechar QR</button>
-            </div>
-          </div>
-        </li>
+      <div class="cb-qr-panel hidden" id="fc-qr-wrap">
+        <h4 id="fc-qr-titulo">Escaneie o QR Code</h4>
+        <p class="hint">No celular do chip: WhatsApp → Aparelhos conectados → Conectar um aparelho</p>
+        <p class="hint" id="fc-qr-status">Gerando QR Code…</p>
+        <img id="fc-qr-img" class="wa-qr-img hidden" alt="QR Code WhatsApp">
+        <p class="hint">O QR expira em poucos segundos. Se falhar, clique em Conectar chip de novo.</p>
+        <button type="button" class="btn btn-ghost btn-sm" id="btn-fc-qr-fechar">Fechar QR</button>
+      </div>
 
-        <li class="cb-step${temGrupo ? ' is-done' : ''}" id="fc-step-group">
-          <div class="cb-step-head">
-            <span class="cb-step-num">2</span>
-            <div>
-              <h4>Grupo da medição <span class="cb-pill cb-pill-lock${temGrupo ? '' : ' hidden'}" id="fc-grupo-pill">travado</span></h4>
-              <p class="hint">Grupo onde o borracheiro manda a placa. Ao selecionar, trava — o chatbot só responde neste grupo.</p>
-            </div>
+      <section class="wa-card${temGrupo ? ' is-done' : ''}" id="fc-step-group">
+        <div class="wa-card-head">
+          <h4>Grupo da medição ${temGrupo ? '<span class="cb-pill cb-pill-lock" id="fc-grupo-pill">definido</span>' : '<span class="cb-pill cb-pill-lock hidden" id="fc-grupo-pill">definido</span>'}</h4>
+          <p class="hint">O borracheiro envia a placa neste grupo e recebe o link. O chatbot só responde aqui.</p>
+        </div>
+        <div class="form-row wa-grupo-row">
+          <div class="form-group" style="flex:1;margin:0">
+            <label for="fc-whatsapp-grupo">Grupo</label>
+            <select id="fc-whatsapp-grupo"${temGrupo ? ' disabled' : ''}>
+              <option value="">— Selecione o grupo —</option>
+              ${grupoAtual ? `<option value="${escapeHtml(grupoAtual)}" selected>${escapeHtml(grupoAtual)}</option>` : ''}
+            </select>
           </div>
-          <div class="cb-step-body">
-            <div class="form-row" style="align-items:flex-end;gap:.5rem">
-              <div class="form-group" style="flex:1;margin:0">
-                <label for="fc-whatsapp-grupo">Grupo WhatsApp</label>
-                <select id="fc-whatsapp-grupo"${temGrupo ? ' disabled' : ''}>
-                  <option value="">— Selecione o grupo —</option>
-                  ${grupoAtual ? `<option value="${escapeHtml(grupoAtual)}" selected>${escapeHtml(grupoAtual)}</option>` : ''}
-                </select>
-              </div>
-              <button type="button" class="btn btn-ghost btn-sm${temGrupo ? ' hidden' : ''}" id="btn-fc-grupos">Atualizar lista</button>
-              <button type="button" class="btn btn-sm${temGrupo ? '' : ' hidden'}" id="btn-fc-trocar-grupo">Escolher outro grupo</button>
-            </div>
-            <small class="field-hint" id="fc-grupo-trava-hint">${temGrupo
-              ? 'Grupo travado. O chatbot só responde neste grupo — comandos em outros grupos são ignorados.'
-              : 'O chip precisa estar no grupo. Conecte primeiro (passo 1), escolha o grupo e ele trava automaticamente.'}</small>
-          </div>
-        </li>
-        <li class="cb-step cb-step-muted${alerta ? ' is-done' : ''}" id="fc-step-alerta">
-          <div class="cb-step-head">
-            <span class="cb-step-num">3</span>
-            <div>
-              <h4>Quem recebe alertas ${data.alertas_enabled ? '' : '<span class="cb-pill">pausado</span>'}</h4>
-              <p class="hint">${data.alertas_enabled
-                ? 'Marque usuários ou grupos que recebem alerta depois de medição crítica/monitorar.'
-                : 'Alertas depois da medição estão pausados. O chatbot do grupo (placa, limite, relatório) continua respondendo.'}</p>
-            </div>
-          </div>
-          <div class="cb-step-body">
-            <div class="form-row" style="align-items:center;gap:.5rem;margin-bottom:.55rem">
-              <button type="button" class="btn btn-ghost btn-sm" id="btn-fc-alerta-opcoes">Atualizar lista</button>
-              <small class="field-hint" style="margin:0">Usuários com WhatsApp + grupos do chip.</small>
-            </div>
-            <div class="cb-check-list" id="fc-alerta-lista">
-              <p class="hint">Clique em “Atualizar lista” para carregar as opções.</p>
-            </div>
-            <input type="hidden" id="fc-whatsapp-alerta" value="${escapeHtml(alerta)}">
-          </div>
-        </li>
-      </ol>
+          <button type="button" class="btn btn-ghost btn-sm${temGrupo ? ' hidden' : ''}" id="btn-fc-grupos">Atualizar lista</button>
+          <button type="button" class="btn btn-sm${temGrupo ? '' : ' hidden'}" id="btn-fc-trocar-grupo">Trocar grupo</button>
+        </div>
+        <small class="field-hint" id="fc-grupo-trava-hint">${temGrupo
+          ? 'Grupo definido. O chatbot ignora mensagens de outros grupos.'
+          : 'Conecte o chip, atualize a lista e escolha o grupo da equipe.'}</small>
+      </section>
 
-      <p class="hint cb-autosave-hint">Número, grupo e alertas salvam automaticamente — não precisa clicar em salvar.</p>
+      <section class="wa-card${alerta ? ' is-done' : ''}" id="fc-step-alerta">
+        <div class="wa-card-head">
+          <h4>Quem recebe alertas ${data.alertas_enabled ? '' : '<span class="cb-pill">pausado</span>'}</h4>
+          <p class="hint">${data.alertas_enabled
+            ? 'Marque quem recebe aviso depois de medição crítica ou para monitorar.'
+            : 'Alertas após medição estão pausados. O chatbot do grupo continua funcionando.'}</p>
+        </div>
+        <div class="form-row" style="align-items:center;gap:.5rem;margin-bottom:.55rem">
+          <button type="button" class="btn btn-ghost btn-sm" id="btn-fc-alerta-opcoes">Atualizar lista</button>
+        </div>
+        <div class="cb-check-list" id="fc-alerta-lista">
+          <p class="hint">Clique em “Atualizar lista” se quiser marcar destinatários.</p>
+        </div>
+        <input type="hidden" id="fc-whatsapp-alerta" value="${escapeHtml(alerta)}">
+      </section>
 
-      <div class="wa-envios-panel" id="fc-envios-panel">
-        <div class="section-header" style="margin:0 0 .5rem;align-items:center">
-          <h4 style="margin:0">Envios recentes</h4>
+      <details class="wa-card wa-envios-panel" id="fc-envios-panel">
+        <summary>Envios recentes</summary>
+        <div class="section-header" style="margin:.75rem 0 .5rem;align-items:center">
+          <p class="hint" id="fc-envios-hint" style="margin:0">Link de medição, relatório e falhas reais deste grupo.</p>
           <div style="display:flex;gap:.4rem;flex-wrap:wrap">
             <button type="button" class="btn btn-ghost btn-sm" id="btn-fc-envios">Atualizar</button>
             <button type="button" class="btn btn-ghost btn-sm" id="btn-fc-limpar-pendentes">Limpar pendentes</button>
           </div>
         </div>
-        <p class="hint" id="fc-envios-hint" style="margin:0 0 .65rem">
-          Só o grupo selecionado na etapa 2. Aparecem link de medição, relatório PDF e falha real — sem “aguarde”, placa errada ou conversa.
-        </p>
         <div class="compras-resumo-filial" style="margin-bottom:.75rem">
           <div class="compras-chip monitorar"><strong id="fc-env-pendentes">—</strong><span>Pendentes / falha</span></div>
           <div class="compras-chip"><strong id="fc-env-enviados">—</strong><span>Enviados</span></div>
         </div>
+        <div id="fc-envios-pendentes-list" class="wa-envios-list"></div>
+        <div id="fc-envios-enviados-list" class="wa-envios-list" style="margin-top:.5rem"></div>
         <details class="wa-envios-logs" id="fc-envios-detalhes-wrap">
-          <summary>Ver pendentes, enviados e logs</summary>
-          <div id="fc-envios-pendentes-list" class="wa-envios-list" style="margin-top:.65rem"></div>
-          <div id="fc-envios-enviados-list" class="wa-envios-list" style="margin-top:.5rem"></div>
-          <div id="fc-envios-logs" class="wa-envios-logs-body mono" style="margin-top:.75rem"></div>
+          <summary>Ver logs técnicos</summary>
+          <div id="fc-envios-logs" class="wa-envios-logs-body mono" style="margin-top:.65rem"></div>
         </details>
-      </div>
+      </details>
+
+      <details class="wa-card wa-advanced">
+        <summary>Ajustes avançados</summary>
+        <div class="form-row cb-token-row" style="margin-top:.85rem">
+          <div class="form-group" style="flex:1;margin:0">
+            <label for="fc-wuzapi-token">Token do servidor (WuzAPI)</label>
+            <input type="password" id="fc-wuzapi-token" placeholder="${temToken ? '•••• já cadastrado — deixe em branco' : 'Clique em Gerar token'}" autocomplete="off">
+          </div>
+          <button type="button" class="btn btn-ghost btn-sm" id="btn-fc-gerar-token">${temToken ? 'Gerar de novo' : 'Gerar token'}</button>
+        </div>
+        <div class="form-group">
+          <label for="fc-whatsapp">Número do chip</label>
+          <input type="tel" id="fc-whatsapp" class="mono" value="${escapeHtml(chip)}" placeholder="Com DDI, ex.: 5562999999999" inputmode="tel" autocomplete="tel">
+          <small class="field-hint">Preenchido sozinho ao conectar. Só altere se o número estiver errado.</small>
+        </div>
+        <p class="hint" id="fc-wuzapi-hint">${temToken
+          ? 'Token desta unidade já existe. Use “Gerar de novo” só se o suporte pedir — isso desconecta o chip.'
+          : 'Se Conectar chip falhar, gere o token e tente outra vez.'}</p>
+      </details>
+      <p class="hint hidden" id="fc-step-connect"></p>
     </div>
   `;
 }
@@ -4116,8 +4119,6 @@ async function loadChatbotGerente() {
     wireFilialChatbotPanel(filialId, data.nome, { alertasEnabled: Boolean(data.alertas_enabled) });
     if (data.aviso_token) {
       toast(data.aviso_token, 'success');
-    } else if (data.token_recem_criado || data.precisa_conectar) {
-      toast('Token desta unidade pronto — clique em Conectar / QR para iniciar.', 'success');
     }
   } catch (err) {
     box.innerHTML = `<p class="hint login-erro">${escapeHtml(err.message)}</p>`;
@@ -4141,11 +4142,11 @@ function wireFilialChatbotPanel(filialId, nomeFilial, { alertasEnabled = false }
     const hint = document.getElementById('fc-grupo-trava-hint');
     if (hint) {
       if (grupoTravado) {
-        hint.textContent = 'Grupo travado. O chatbot só responde neste grupo — comandos em outros grupos são ignorados.';
+        hint.textContent = 'Grupo definido. O chatbot ignora mensagens de outros grupos.';
       } else if (grupoSalvo) {
         hint.textContent = 'Escolha o novo grupo. Até salvar, o chatbot continua no grupo atual.';
       } else {
-        hint.textContent = 'O chip precisa estar no grupo. Conecte primeiro (passo 1), escolha o grupo e ele trava automaticamente.';
+        hint.textContent = 'Conecte o chip, atualize a lista e escolha o grupo da equipe.';
       }
     }
   };
@@ -4167,6 +4168,81 @@ function wireFilialChatbotPanel(filialId, nomeFilial, { alertasEnabled = false }
   };
 
   let chipSessaoAplicado = false;
+  let gruposJaPedidos = false;
+  let estadoOnline = false;
+  let falhasOff = 0;
+
+  const pintarHero = (modo) => {
+    const hero = document.getElementById('fc-hero');
+    hero?.classList.remove('is-online', 'is-wait', 'is-off', 'is-warn');
+    if (modo) hero?.classList.add(modo);
+    if (hero) hero.dataset.modo = modo || '';
+  };
+
+  const atualizarBotaoTrocar = (online) => {
+    const temChip = Boolean(valorCampoWa(document.getElementById('fc-whatsapp')?.value));
+    const visivel = Boolean(online || temChip || grupoSalvo);
+    document.getElementById('btn-fc-desconectar')?.classList.toggle('hidden', !visivel);
+  };
+
+  const atualizarLinhaChip = (phone) => {
+    const line = document.getElementById('fc-chip-line');
+    if (!line) return;
+    const digits = String(phone || document.getElementById('fc-whatsapp')?.value || '').replace(/\D/g, '');
+    const grupoOk = Boolean(valorCampoWa(document.getElementById('fc-whatsapp-grupo')?.value) || grupoSalvo);
+    line.innerHTML = `Chip: <strong>${digits ? escapeHtml(digits) : 'ainda não informado'}</strong>${grupoOk ? ' · Grupo escolhido' : ' · Sem grupo'}`;
+  };
+
+  const aplicarEstadoTela = ({ online, aguardandoQr, instavel, detalhe }) => {
+    const detail = document.getElementById('fc-status-detail');
+    const btnConn = document.getElementById('btn-fc-conectar');
+    if (online) {
+      estadoOnline = true;
+      falhasOff = 0;
+      statusEl.className = '';
+      statusEl.textContent = 'Conectado';
+      pintarHero('is-online');
+      if (detail) detail.textContent = detalhe || 'Chip no ar. O grupo abaixo é o da medição.';
+      if (btnConn) {
+        btnConn.textContent = 'Atualizar status';
+        btnConn.classList.remove('btn-primary');
+        btnConn.classList.add('btn-ghost');
+      }
+      document.getElementById('fc-qr-wrap')?.classList.add('hidden');
+      atualizarBotaoTrocar(true);
+      return;
+    }
+    if (aguardandoQr) {
+      statusEl.className = '';
+      statusEl.textContent = 'Aguardando QR';
+      pintarHero('is-wait');
+      if (detail) detail.textContent = detalhe || 'Escaneie o QR com o WhatsApp do chip desta unidade.';
+      if (btnConn) {
+        btnConn.textContent = 'Gerar QR de novo';
+        btnConn.classList.add('btn-primary');
+        btnConn.classList.remove('btn-ghost');
+      }
+      return;
+    }
+    if (instavel && estadoOnline) {
+      statusEl.className = '';
+      statusEl.textContent = 'Conectado';
+      pintarHero('is-warn');
+      if (detail) detail.textContent = detalhe || 'Confirmando o chip… se isto persistir, o servidor do WhatsApp pode estar lento.';
+      return;
+    }
+    estadoOnline = false;
+    statusEl.className = '';
+    statusEl.textContent = 'Desconectado';
+    pintarHero('is-off');
+    if (detail) detail.textContent = detalhe || 'Clique em Conectar chip e escaneie o QR.';
+    if (btnConn) {
+      btnConn.textContent = 'Conectar chip';
+      btnConn.classList.add('btn-primary');
+      btnConn.classList.remove('btn-ghost');
+    }
+    atualizarBotaoTrocar(false);
+  };
 
   const aplicarNumeroChip = async (phone, { salvar = true, forcar = false } = {}) => {
     const digits = String(phone || '').replace(/\D/g, '');
@@ -4213,28 +4289,14 @@ function wireFilialChatbotPanel(filialId, nomeFilial, { alertasEnabled = false }
     toast('Número do chip salvo', 'success');
   };
 
-  const refreshStatus = async () => {
+  const refreshStatus = async ({ silencioso = true } = {}) => {
     if (!statusEl) return;
-    const detail = document.getElementById('fc-status-detail');
-    const stepConnect = document.getElementById('fc-step-connect');
-    const stepGroup = document.getElementById('fc-step-group');
+    if (document.getElementById('fc-hero')?.dataset.modo === 'is-online') {
+      estadoOnline = true;
+    }
     try {
       const st = await fetchJSON(`${API}/whatsapp/filial/${filialId}/status`);
       if (st.filial_id != null && Number(st.filial_id) !== Number(filialId)) return;
-
-      if (!st.configurado || st.precisa_conectar) {
-        statusEl.className = 'badge badge-sem_dado';
-        statusEl.textContent = st.configurado ? 'Desconectado' : 'Sem token';
-        if (detail) {
-          detail.textContent = st.mensagem
-            || (st.precisa_conectar
-              ? 'Token pronto. Clique em Conectar / QR com o chip desta unidade.'
-              : 'Gere o token desta unidade e conecte o chip dela.');
-        }
-        stepConnect?.classList.add('is-active');
-        stepConnect?.classList.remove('is-done');
-        return;
-      }
 
       if (st.loggedIn && st.phone) {
         const atual = String(document.getElementById('fc-whatsapp')?.value || '').replace(/\D/g, '');
@@ -4242,39 +4304,88 @@ function wireFilialChatbotPanel(filialId, nomeFilial, { alertasEnabled = false }
           await aplicarNumeroChip(st.phone, { salvar: true, forcar: true });
           chipSessaoAplicado = true;
         }
-      }
-      if (st.loggedIn) {
-        statusEl.className = 'badge badge-ok';
-        statusEl.textContent = 'Online';
-        if (detail) detail.textContent = 'Conectado. Atualize e escolha o grupo da medição.';
-        stepConnect?.classList.add('is-done');
-        stepConnect?.classList.remove('is-active');
-        stepGroup?.classList.add('is-active');
-        carregarGrupos(true);
-      } else if (st.connected) {
-        statusEl.className = 'badge badge-alerta';
-        statusEl.textContent = 'Aguardando QR';
-        if (detail) detail.textContent = 'Escaneie o QR com o WhatsApp do chip desta unidade.';
-        stepConnect?.classList.add('is-active');
+        atualizarLinhaChip(st.phone);
       } else {
-        statusEl.className = 'badge badge-sem_dado';
-        statusEl.textContent = 'Desconectado';
-        if (detail) detail.textContent = 'Clique em Conectar / QR com o chip desta unidade.';
-        stepConnect?.classList.add('is-active');
-        stepConnect?.classList.remove('is-done');
+        atualizarLinhaChip(st.chip_salvo || st.whatsapp);
       }
+
+      if (st.loggedIn) {
+        aplicarEstadoTela({
+          online: true,
+          detalhe: st.phone
+            ? `Chip ${st.phone} no ar. Escolha o grupo se ainda não tiver um.`
+            : 'Chip no ar. Escolha o grupo da medição.',
+        });
+        if (!gruposJaPedidos) {
+          gruposJaPedidos = true;
+          carregarGrupos(true);
+        }
+        return;
+      }
+
+      if (st.instavel || !st.configurado) {
+        falhasOff += 1;
+        if (estadoOnline && falhasOff < 3) {
+          aplicarEstadoTela({
+            online: false,
+            instavel: true,
+            detalhe: st.mensagem || 'Confirmando o chip…',
+          });
+          return;
+        }
+        aplicarEstadoTela({
+          online: false,
+          detalhe: st.configurado
+            ? (st.mensagem || 'Servidor do WhatsApp instável. Tente de novo em instantes.')
+            : 'Falta o token desta unidade — abra Ajustes avançados e gere o token.',
+        });
+        return;
+      }
+
+      if (st.connected && !st.loggedIn) {
+        aplicarEstadoTela({ online: false, aguardandoQr: true });
+        return;
+      }
+
+      falhasOff += 1;
+      if (estadoOnline && falhasOff < 3) {
+        aplicarEstadoTela({
+          online: false,
+          instavel: true,
+          detalhe: 'Confirmando o chip…',
+        });
+        return;
+      }
+      aplicarEstadoTela({
+        online: false,
+        detalhe: st.mensagem || 'Clique em Conectar chip e escaneie o QR.',
+      });
     } catch (err) {
-      statusEl.className = 'badge badge-critico';
-      statusEl.textContent = 'Erro status';
-      if (detail) detail.textContent = err?.message || 'Falha ao consultar o chatbot.';
-      const hint = document.getElementById('fc-wuzapi-hint');
-      if (hint && err?.message) {
-        hint.textContent = err.message;
-        hint.classList.add('login-erro');
+      falhasOff += 1;
+      if (estadoOnline && falhasOff < 3) {
+        aplicarEstadoTela({
+          online: false,
+          instavel: true,
+          detalhe: 'Confirmando o chip…',
+        });
+        return;
+      }
+      aplicarEstadoTela({
+        online: false,
+        detalhe: err?.message || 'Falha ao consultar o WhatsApp.',
+      });
+      if (!silencioso) {
+        const hint = document.getElementById('fc-wuzapi-hint');
+        if (hint && err?.message) {
+          hint.textContent = err.message;
+          hint.classList.add('login-erro');
+        }
       }
     }
   };
-  refreshStatus();
+  refreshStatus({ silencioso: true });
+  if (waStatusWatchTimer) clearInterval(waStatusWatchTimer);
+  waStatusWatchTimer = setInterval(() => refreshStatus({ silencioso: true }), 8000);
 
   const renderEnvioItem = (item, { reenviar = false } = {}) => `
     <div class="wa-envio-item" data-id="${item.id}">
@@ -4401,6 +4512,16 @@ function wireFilialChatbotPanel(filialId, nomeFilial, { alertasEnabled = false }
   };
 
   document.getElementById('btn-fc-grupos')?.addEventListener('click', () => carregarGrupos(false));
+  document.getElementById('chatbot-filial-panel')?.addEventListener('wa-chip-ok', () => {
+    estadoOnline = true;
+    falhasOff = 0;
+    atualizarLinhaChip(document.getElementById('fc-whatsapp')?.value);
+    atualizarBotaoTrocar(true);
+    if (!gruposJaPedidos) {
+      gruposJaPedidos = true;
+      carregarGrupos(true);
+    }
+  });
   document.getElementById('btn-fc-trocar-grupo')?.addEventListener('click', async () => {
     aplicarTravaGrupo(false);
     toast('Selecione o novo grupo. O chatbot continua no grupo atual até você escolher.');
@@ -4557,11 +4678,11 @@ function wireFilialChatbotPanel(filialId, nomeFilial, { alertasEnabled = false }
       }
       const statusEl = document.getElementById('fc-status');
       if (statusEl) {
-        statusEl.className = 'badge badge-sem_dado';
+        statusEl.className = '';
         statusEl.textContent = 'Desconectado';
       }
-      document.getElementById('fc-step-connect')?.classList.remove('is-done');
-      document.getElementById('fc-step-connect')?.classList.add('is-active');
+      document.getElementById('fc-hero')?.classList.add('is-off');
+      document.getElementById('fc-hero')?.classList.remove('is-online', 'is-wait', 'is-warn');
       refreshStatus();
     } catch (err) {
       toast(err.message, 'error');
@@ -4570,6 +4691,11 @@ function wireFilialChatbotPanel(filialId, nomeFilial, { alertasEnabled = false }
 
   document.getElementById('btn-fc-conectar')?.addEventListener('click', async () => {
     const btn = document.getElementById('btn-fc-conectar');
+    if (/atualizar/i.test(btn?.textContent || '')) {
+      await refreshStatus({ silencioso: false });
+      toast(estadoOnline ? 'Chip continua conectado' : 'Status atualizado');
+      return;
+    }
     try {
       if (btn) btn.disabled = true;
       abrirPainelQr('Gerando QR Code… isso pode levar alguns segundos.', nomeFilial);
@@ -4583,9 +4709,13 @@ function wireFilialChatbotPanel(filialId, nomeFilial, { alertasEnabled = false }
         chipSessaoAplicado = false;
         await aplicarNumeroChip(data.phone, { salvar: true, forcar: true });
         chipSessaoAplicado = true;
+        atualizarLinhaChip(data.phone);
       }
       if (data.loggedIn) {
         toast(data.mensagem || `Chatbot ${nomeFilial} já está conectado`, 'success');
+        aplicarEstadoTela({ online: true, detalhe: data.mensagem });
+        gruposJaPedidos = false;
+        setTimeout(() => carregarGrupos(true), 800);
       } else if (data.qrcode) {
         toast('Escaneie o QR com o WhatsApp do chip', 'success');
         startWaPollFilial(filialId, nomeFilial);
@@ -4593,8 +4723,7 @@ function wireFilialChatbotPanel(filialId, nomeFilial, { alertasEnabled = false }
         toast(data.mensagem || 'Não foi possível gerar o QR', 'error');
         startWaPollFilial(filialId, nomeFilial);
       }
-      refreshStatus();
-      if (data.loggedIn) setTimeout(() => carregarGrupos(true), 1200);
+      await refreshStatus({ silencioso: true });
     } catch (err) {
       abrirPainelQr(err.message || 'Falha ao gerar o QR', nomeFilial);
       const { status } = painelQrEls();
@@ -4606,7 +4735,7 @@ function wireFilialChatbotPanel(filialId, nomeFilial, { alertasEnabled = false }
   });
 
   document.getElementById('btn-fc-desconectar')?.addEventListener('click', async () => {
-    if (!confirm('Desconectar o chip, apagar número e grupo salvos, e deixar limpo para conectar outro celular?')) return;
+    if (!confirm('Desconectar este chip? Número e grupo salvos serão apagados. Use só para trocar de celular.')) return;
     const btn = document.getElementById('btn-fc-desconectar');
     try {
       if (btn) btn.disabled = true;
@@ -4639,7 +4768,7 @@ function wireFilialChatbotPanel(filialId, nomeFilial, { alertasEnabled = false }
 
   document.getElementById('btn-fc-qr-fechar')?.addEventListener('click', () => {
     document.getElementById('fc-qr-wrap')?.classList.add('hidden');
-    stopWaPoll();
+    stopWaQrPoll();
   });
 }
 

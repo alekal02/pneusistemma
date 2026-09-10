@@ -200,9 +200,11 @@ export async function garantirTokenExclusivoFilial(filial, opts = {}) {
 
   const nomeUser = nomeUsuarioWuzapiFilial(atual);
   const tokenAtual = tokenNaoEAdmin(atual.wuzapi_token);
-  const envTok = tokenNaoEAdmin(config.wuzapiToken);
+  // Só é "compartilhado" se OUTRA filial usa o mesmo token.
+  // Igualdade com WUZAPI_TOKEN do .env é comum (primeira unidade) e NÃO
+  // deve regenerar o token — isso derrubava a sessão WhatsApp a cada status.
   const compartilhado = tokenAtual
-    ? (await tokenUsadoPorOutraFilial(atual.id, tokenAtual) || (envTok && tokenAtual === envTok))
+    ? await tokenUsadoPorOutraFilial(atual.id, tokenAtual)
     : false;
 
   const precisaNovo = opts.forcarNovo || !tokenAtual || compartilhado;
@@ -231,7 +233,7 @@ export async function garantirTokenExclusivoFilial(filial, opts = {}) {
       return n === nomeUser || n === `PneuSistemma-${atual.id}`;
     });
     const cand = tokenNaoEAdmin(dedicado?.token);
-    if (cand && !(await tokenUsadoPorOutraFilial(atual.id, cand)) && !(envTok && cand === envTok)) {
+    if (cand && !(await tokenUsadoPorOutraFilial(atual.id, cand))) {
       token = cand;
       origem = 'existente';
     }
@@ -274,8 +276,10 @@ export async function garantirTokenExclusivoFilial(filial, opts = {}) {
     }
   }
 
-  // Token novo / regenerado: limpa chip/grupo herdados de outra sessão
-  const limparCampos = compartilhado || opts.forcarNovo || !tokenAtual;
+  // Só apaga chip/grupo quando o gerente pede “Gerar de novo”.
+  // Token novo em filial vazia não tem o que perder; sessão compartilhada
+  // mantém o número e o grupo já cadastrados.
+  const limparCampos = Boolean(opts.forcarNovo);
   await db.prepare(`
     UPDATE filiais SET
       wuzapi_token = ?,
