@@ -1,6 +1,19 @@
-# WuzAPI local para o PneuSistemma (QR / grupos / alertas WhatsApp)
+# WuzAPI de produção (QR / grupos / alertas).
+# Rode no SERVIDOR do WuzAPI (o host de WUZAPI_BASE_URL no Render), não no PC de edição.
 # Uso: docker compose -f docker-compose.wuzapi.yml up -d
 # Dashboard: http://localhost:8080/dashboard  (admin: 1234ABCD)
+#
+# Nunca use `down -v` — o volume wuzapi_pgdata guarda usuários e sessões das filiais.
+#
+# DB_HOST e extra_hosts usam IP fixo para o app NÃO consultar o DNS 127.0.0.11
+# (erro: lookup db on 127.0.0.11:53: server misbehaving).
+
+networks:
+  wuzapi:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.88.0/24
 
 services:
   wuzapi-db:
@@ -14,7 +27,8 @@ services:
     volumes:
       - wuzapi_pgdata:/var/lib/postgresql/data
     networks:
-      default:
+      wuzapi:
+        ipv4_address: 172.30.88.10
         aliases:
           - db
     healthcheck:
@@ -32,9 +46,13 @@ services:
         condition: service_healthy
     ports:
       - '8080:8080'
+    extra_hosts:
+      - 'db:172.30.88.10'
+    links:
+      - 'wuzapi-db:db'
     environment:
       TZ: America/Sao_Paulo
-      DB_HOST: db
+      DB_HOST: 172.30.88.10
       DB_PORT: 5432
       DB_USER: wuzapi
       DB_PASSWORD: wuzapi
@@ -44,6 +62,8 @@ services:
       WUZAPI_GLOBAL_HMAC_KEY: wuzapi-pneusistemma-hmac-key-min-32chars!
       SESSION_DEVICE_NAME: PneuSistemma
       WEBHOOK_FORMAT: json
+    networks:
+      - wuzapi
     restart: unless-stopped
 
 volumes:
