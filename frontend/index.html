@@ -178,9 +178,9 @@
         <h2>WhatsApp</h2>
       </div>
       <p class="hint wa-page-hint">
-        <span>1. Conecte o chip</span>
-        <span>2. Escolha o grupo</span>
-        <span>3. Envie a <strong>placa</strong> no WhatsApp</span>
+        <span>1. Conectar (QR)</span>
+        <span>2. Escolher o grupo</span>
+        <span>3. Pronto — desconectar e ver o log</span>
       </p>
       <div id="chatbot-filial-panel" class="card chatbot-setup-card"></div>
     </section>
@@ -219,6 +219,12 @@
         </div>
       </div>
       <h2>Resumo da Frota</h2>
+      <div class="frota-busca-bar">
+        <label class="frota-busca-label" for="dash-frota-busca">Buscar veículo</label>
+        <input type="search" id="dash-frota-busca" list="dash-frota-sugestoes" placeholder="Placa, apelido ou modelo…" autocomplete="off">
+        <datalist id="dash-frota-sugestoes"></datalist>
+        <span class="hint" id="dash-frota-busca-count"></span>
+      </div>
       <p class="hint" id="dashboard-limites-hint"></p>
       <div class="dash-dia-row" id="dash-dia-wrap">
         <label for="dash-dia-medicao">Dia da medição da frota</label>
@@ -240,6 +246,12 @@
           </label>
           <button class="btn btn-primary" id="btn-novo-veiculo">+ Novo Veículo</button>
         </div>
+      </div>
+      <div class="frota-busca-bar">
+        <label class="frota-busca-label" for="veiculos-busca">Buscar veículo</label>
+        <input type="search" id="veiculos-busca" list="veiculos-sugestoes" placeholder="Placa, apelido ou modelo…" autocomplete="off">
+        <datalist id="veiculos-sugestoes"></datalist>
+        <span class="hint" id="veiculos-busca-count"></span>
       </div>
 
       <div class="carga-frota-banner card">
@@ -285,12 +297,13 @@
       </div>
       <ol class="fluxo-passos">
         <li class="ativo"><strong>Estoque</strong> — cadastre pneus avulsos aqui</li>
+        <li><strong>Planilha</strong> — preencha placa e posição para já montar no caminhão</li>
         <li><strong>Atalho</strong> — no veículo, clique no slot vazio e crie o pneu na hora</li>
       </ol>
-      <p class="hint">Use esta aba para estoque, histórico e pneus em descarte (tratamento do destino). Para montar rápido, prefira o diagrama do veículo.</p>
+      <p class="hint">Use esta aba para estoque, histórico e pneus em descarte. Na planilha, placa + posição montam o pneu no caminhão já cadastrado.</p>
       <details class="import-hint-details">
         <summary>Dica para importação CSV de pneus</summary>
-        <p class="hint import-hint">Campos: nº de fogo, padrão (<code>direcional</code>, <code>misto</code>, <code>borrachudo</code>), condição.</p>
+        <p class="hint import-hint">Campos: nº de fogo, <code>placa</code>, <code>posicao</code> (ex.: 1E, 2EE), padrão (<code>direcional</code>, <code>misto</code>, <code>borrachudo</code>), condição. Com placa e posição preenchidas o pneu já entra montado no caminhão. Sem placa, vai para o estoque.</p>
       </details>
       <div id="import-resultado-pneus" class="import-resultado hidden"></div>
       <div class="pneus-toolbar">
@@ -1166,6 +1179,19 @@
           </div>
         </div>
       </details>
+      <input type="hidden" id="pneu-edit-status" value="">
+      <div id="pneu-destino-estoque" class="pneu-destino-box hidden">
+        <p><strong>Enviar este pneu do estoque</strong></p>
+        <p class="hint">Não precisa montar no caminhão. Recapagem fica em processo até voltar; descarte vai para o estoque de descarte para definir o tratamento.</p>
+        <div class="form-group">
+          <label for="pneu-destino-obs">Observação (opcional)</label>
+          <input type="text" id="pneu-destino-obs" placeholder="Ex.: sulco baixo, recap Bandag, rasgado…">
+        </div>
+        <div class="pneu-destino-acoes">
+          <button type="button" class="btn btn-ghost" id="btn-pneu-enviar-recap">Enviar à recapagem</button>
+          <button type="button" class="btn btn-ghost btn-danger-text" id="btn-pneu-enviar-descarte">Enviar ao descarte</button>
+        </div>
+      </div>
       <div class="modal-actions">
         <button type="button" class="btn btn-ghost" id="btn-cancelar-pneu">Cancelar</button>
         <button type="submit" class="btn btn-primary">Salvar</button>

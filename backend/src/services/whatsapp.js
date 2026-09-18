@@ -11,7 +11,10 @@ import { getDb } from '../database.js';
 
 export function limparTelefone(phone) {
   if (!phone) return '';
-  return String(phone).replace(/@.*$/, '').replace(/\D/g, '');
+  return String(phone)
+    .replace(/@.*$/, '')
+    .split(':')[0]
+    .replace(/\D/g, '');
 }
 
 /** Normaliza destino: número pessoal ou grupo WhatsApp */
@@ -119,9 +122,102 @@ function headersUsuarioWuzapi(token) {
 function mensagemErroWuzapi(status, msg) {
   const texto = typeof msg === 'string' ? msg : JSON.stringify(msg);
   if (ehFalhaAuthWuzapi(status, texto)) {
-    return 'Sessão WhatsApp recusada (401). Clique em Gerar token e depois Conectar / QR com o chip da unidade.';
+    return 'Não foi possível enviar agora. O chip continua nesta unidade — tente de novo em instantes.';
   }
   return `WuzAPI erro ${status}: ${texto}`;
+}
+
+async function conectarSessaoEnvio(token) {
+  const t = tokenNaoEAdmin(token);
+  if (!t || !config.wuzapiBaseUrl) return;
+  try {
+    await fetch(`${config.wuzapiBaseUrl}/session/connect`, {
+      method: 'POST',
+      headers: headersUsuarioWuzapi(t),
+      body: JSON.stringify({ Subscribe: ['Message'], Immediate: true }),
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch {
+    // sessão pode já estar no ar
+  }
+}
+
+async function tokenVivoEnvio(filialId) {
+  if (!filialId) return '';
+  const db = getDb();
+  const f = await db.prepare(`
+    SELECT id, nome, codigo, whatsapp, wuzapi_token FROM filiais WHERE id = ? AND ativo = 1
+  `).get(filialId);
+  if (!f) return '';
+  const viva = await reconectarSessaoVivaFilial(f, { forcarUsers: true });
+  return tokenNaoEAdmin(viva?.token);
+}
+
+async function postWuzapiJson(path, token, payload, timeoutMs) {
+  const res = await fetch(`${config.wuzapiBaseUrl}${path}`, {
+    method: 'POST',
+    headers: headersUsuarioWuzapi(token),
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  const raw = await res.text();
+  let data;
+  try {
+    data = raw ? JSON.parse(raw) : {};
+  } catch {
+    data = { raw };
+  }
+  return { res, data };
+}
+
+/**
+ * Envia na sessão desta filial. Se o token do cadastro der 401, reconecta
+ * a sessão viva (mesmo chip) e tenta de novo — não gera QR nem usuário novo.
+ */
+async function enviarNaSessaoFilial({ path, payload, timeoutMs, filialId, token, extraTokens = [] }) {
+  const tokens = await listarTokensEnvio(filialId, token);
+  for (const extra of extraTokens) {
+    const u = tokenNaoEAdmin(extra);
+    if (u && !tokens.includes(u)) tokens.push(u);
+  }
+  if (!tokens.length || !config.wuzapiBaseUrl) return { skipped: true };
+
+  let lastErr = null;
+  const tried = new Set();
+  for (let i = 0; i < tokens.length; i += 1) {
+    const tok = tokens[i];
+    if (!tok || tried.has(tok)) continue;
+    tried.add(tok);
+
+    let { res, data } = await postWuzapiJson(path, tok, payload, timeoutMs);
+    if (res.ok) return data;
+
+    const msg = data?.error || data?.erro || JSON.stringify(data);
+    lastErr = new Error(mensagemErroWuzapi(res.status, msg));
+    lastErr.status = res.status;
+
+    if (!ehFalhaAuthWuzapi(res.status, msg)) {
+      if (i < tokens.length - 1) continue;
+      throw lastErr;
+    }
+
+    await conectarSessaoEnvio(tok);
+    ({ res, data } = await postWuzapiJson(path, tok, payload, timeoutMs));
+    if (res.ok) return data;
+
+    let vivo = '';
+    try {
+      vivo = await tokenVivoEnvio(filialId);
+    } catch (err) {
+      console.warn('[whatsapp] sessão viva indisponível no reenvio:', err.message);
+    }
+    if (vivo && !tried.has(vivo)) {
+      console.warn('[whatsapp] 401 no envio — usando a sessão já pareada da filial', filialId);
+      tokens.push(vivo);
+    }
+  }
+
+  throw lastErr || new Error('Falha ao enviar WhatsApp');
 }
 
 /**
@@ -162,50 +258,84 @@ function nomesAntigosUsuarioWuzapi(filial) {
     `Pneu-${codigo}`,
     `PneuSistemma-${filial.id}`,
     `Pneu-${filial.id}`,
+    `Pneu${filial.id}`,
+    codigo,
   ].filter(Boolean);
 }
 
-/** Sessão WhatsApp já logada desta unidade no WuzAPI (não cria usuário novo). */
-export async function sessaoVivaDaFilial(filial) {
-  if (!filial?.id) return null;
-  const users = await adminUsersWuzapi();
-  const nomesOk = new Set(
+function nomesUsuarioWuzapiFilial(filial) {
+  return new Set(
     [nomeUsuarioWuzapiFilial(filial), ...nomesAntigosUsuarioWuzapi(filial)]
       .map((n) => String(n || '').trim())
       .filter(Boolean)
   );
+}
+
+function sessaoWuzapiAtiva(u) {
+  return Boolean(u?.loggedIn ?? u?.LoggedIn);
+}
+
+/**
+ * Encontra o usuário WuzAPI desta unidade sem criar outro.
+ * Prioridade: nome da filial → token salvo → chip já cadastrado.
+ * Usado para NÃO derrubar sessões que já estão no ar.
+ */
+export function encontrarUsuarioWuzapiDaFilial(filial, users) {
+  if (!filial?.id) return null;
+  const nomesOk = nomesUsuarioWuzapiFilial(filial);
   const prefixoId = `Pneu${filial.id}-`;
-  const chip = limparTelefone(filial.whatsapp);
-  const vivos = (users || []).filter((u) => {
-    const logged = Boolean(u.loggedIn ?? u.LoggedIn);
-    const connected = Boolean(u.connected ?? u.Connected);
+  const chipFilial = limparTelefone(filial.whatsapp);
+  const tokenFilial = tokenNaoEAdmin(filial.wuzapi_token);
+  const candidatos = (users || []).filter((u) => {
+    const name = String(u.name || u.Name || '').trim();
     const phone = limparTelefone(u.jid || u.JID || u.phone || u.Phone);
-    return logged || connected || (phone && phone.length >= 10);
+    const tokenUser = tokenNaoEAdmin(u.token || u.Token);
+    const ativa = sessaoWuzapiAtiva(u);
+    const porNome = nomesOk.has(name)
+      || name.startsWith(prefixoId)
+      || [...nomesOk].some((n) => n.toLowerCase() === name.toLowerCase());
+    const porToken = Boolean(tokenFilial && tokenUser && tokenFilial === tokenUser);
+    const porChip = Boolean(chipFilial && phone && chipsWhatsappIguais(phone, chipFilial));
+    if (porNome) return true;
+    if (porToken) return true;
+    if (porChip && (ativa || Boolean(u.loggedIn ?? u.LoggedIn) || Boolean(u.connected ?? u.Connected))) return true;
+    return false;
   });
-  const porNome = vivos.filter((u) => {
+  if (!candidatos.length) return null;
+  const porNome = candidatos.filter((u) => {
     const name = String(u.name || u.Name || '').trim();
     return nomesOk.has(name) || name.startsWith(prefixoId);
   });
-  let u = porNome.find((x) => x.loggedIn === true || x.LoggedIn === true)
-    || porNome[0];
-  if (!u && chip) {
-    u = vivos.find((x) => chipsWhatsappIguais(x.jid || x.JID || x.phone, chip));
-  }
+  const logged = (lista) => lista.find((x) => x.loggedIn === true || x.LoggedIn === true);
+  return logged(porNome) || logged(candidatos) || porNome[0] || candidatos[0];
+}
+
+/** Sessão WhatsApp já logada desta unidade no WuzAPI (não cria usuário novo). */
+export async function sessaoVivaDaFilial(filial, { forcarUsers = false } = {}) {
+  if (!filial?.id) return null;
+  const users = await adminUsersWuzapi({ forcar: forcarUsers });
+  const u = encontrarUsuarioWuzapiDaFilial(filial, users);
   const token = tokenNaoEAdmin(u?.token || u?.Token);
   if (!token) return null;
+  const phone = limparTelefone(u.jid || u.JID || u.phone);
+  // JID antigo no admin não conta: depois do logout no celular o número fica residual.
+  if (!sessaoWuzapiAtiva(u)) return null;
   return {
     token,
     name: u.name || u.Name || null,
     jid: u.jid || u.JID || null,
-    phone: limparTelefone(u.jid || u.JID || u.phone),
+    phone,
     loggedIn: true,
   };
 }
 
-export async function reconectarSessaoVivaFilial(filial) {
-  const viva = await sessaoVivaDaFilial(filial);
+const recriarLockPorFilial = new Map();
+
+export async function reconectarSessaoVivaFilial(filial, { forcarUsers = false, naoGravar = false } = {}) {
+  if (filial?.id && recriarLockPorFilial.has(Number(filial.id))) return null;
+  const viva = await sessaoVivaDaFilial(filial, { forcarUsers });
   if (!viva?.token) return null;
-  await gravarTokenFilialSeDiferente(filial.id, viva.token);
+  if (!naoGravar) await gravarTokenFilialSeDiferente(filial.id, viva.token);
   return viva;
 }
 
@@ -255,7 +385,14 @@ export async function chipUsadoPorOutraFilial(filialId, phone) {
   return (rows || []).find((r) => chipsWhatsappIguais(r.whatsapp, digits)) || null;
 }
 
-async function adminUsersWuzapi() {
+let cacheAdminUsersSvc = { at: 0, users: null };
+const ADMIN_USERS_SVC_TTL_MS = 10_000;
+
+async function adminUsersWuzapi({ forcar = false } = {}) {
+  const agora = Date.now();
+  if (!forcar && cacheAdminUsersSvc.users && (agora - cacheAdminUsersSvc.at) < ADMIN_USERS_SVC_TTL_MS) {
+    return cacheAdminUsersSvc.users;
+  }
   const admin = tokenWuzapiUtil(config.wuzapiAdminToken);
   if (!admin || !config.wuzapiBaseUrl) return [];
   try {
@@ -265,9 +402,11 @@ async function adminUsersWuzapi() {
     });
     if (!res.ok) return [];
     const data = await res.json();
-    return Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : []);
+    const users = Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : []);
+    cacheAdminUsersSvc = { at: agora, users };
+    return users;
   } catch {
-    return [];
+    return cacheAdminUsersSvc.users || [];
   }
 }
 
@@ -294,178 +433,324 @@ export async function garantirTokenExclusivoFilial(filial, opts = {}) {
 
   const nomeUser = nomeUsuarioWuzapiFilial(atual);
   const tokenAtual = tokenNaoEAdmin(atual.wuzapi_token);
-  // Só é "compartilhado" se OUTRA filial usa o mesmo token.
-  // Igualdade com WUZAPI_TOKEN do .env é comum (primeira unidade) e NÃO
-  // deve regenerar o token — isso derrubava a sessão WhatsApp a cada status.
+  const forcarNovo = Boolean(opts.forcarNovo);
+  // Token já gravado: não consulta /admin/users nem cria outro usuário.
+  // POST /admin/users a cada Conectar derruba o WuzAPI (sqlite/disco).
+  if (tokenAtual && !forcarNovo) {
+    const compartilhado = await tokenUsadoPorOutraFilial(atual.id, tokenAtual);
+    if (!compartilhado) {
+      return {
+        token: tokenAtual,
+        criado: false,
+        regenerado: false,
+        compartilhado: false,
+        nome_wuzapi: nomeUser,
+        precisa_conectar: true,
+      };
+    }
+  }
   const compartilhado = tokenAtual
     ? await tokenUsadoPorOutraFilial(atual.id, tokenAtual)
     : false;
 
-  const usersWuz = await adminUsersWuzapi();
-
-  // Se esta unidade já tem chip logado no WuzAPI, usa essa sessão.
-  // “Gerar de novo” NÃO pode criar outro usuário e derrubar o QR.
-  const nomesOk = new Set(
-    [nomeUser, ...nomesAntigosUsuarioWuzapi(atual)]
-      .map((n) => String(n || '').trim())
-      .filter(Boolean)
-  );
+  const nomesOk = nomesUsuarioWuzapiFilial(atual);
+  const nomesLow = new Set([...nomesOk].map((n) => n.toLowerCase()));
   const prefixoId = `Pneu${atual.id}-`;
-  const viva = (usersWuz || []).find((u) => {
+  const nomeSan = String(atual.nome || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+  const daMesmaFilial = (lista) => (lista || []).filter((u) => {
     const name = String(u.name || u.Name || '').trim();
-    const logged = Boolean(u.loggedIn ?? u.LoggedIn) || Boolean(u.connected ?? u.Connected);
-    if (!logged) return false;
-    return nomesOk.has(name) || name.startsWith(prefixoId);
+    const tok = tokenNaoEAdmin(u.token || u.Token);
+    if (nomesOk.has(name) || name.startsWith(prefixoId)) return true;
+    if (nomesLow.has(name.toLowerCase())) return true;
+    if (nomeSan.length >= 5 && name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() === nomeSan) return true;
+    return Boolean(tokenAtual && tok === tokenAtual);
   });
-  const tokenVivo = tokenNaoEAdmin(viva?.token || viva?.Token);
-  if (tokenVivo) {
-    await gravarTokenFilialSeDiferente(atual.id, tokenVivo);
-    return {
-      token: tokenVivo,
-      criado: false,
-      regenerado: false,
-      compartilhado: false,
-      nome_wuzapi: viva.name || viva.Name || nomeUser,
-      precisa_conectar: false,
-    };
+
+  let usersWuz = await adminUsersWuzapi({ forcar: true });
+  let daFilial = daMesmaFilial(usersWuz);
+
+  // Uma unidade = uma key. Duplicatas desconectadas desta filial são apagadas.
+  // Nunca apaga sessão de outra unidade (Pneu-CN1, Pneu-UB1, etc.).
+  if (daFilial.length > 1) {
+    const keeper = daFilial.find((u) => sessaoWuzapiAtiva(u)) || daFilial[0];
+    const keeperId = String(keeper.id ?? keeper.Id ?? keeper.ID ?? '');
+    const adminTok = tokenWuzapiUtil(config.wuzapiAdminToken);
+    for (const u of daFilial) {
+      const id = u.id ?? u.Id ?? u.ID;
+      if (id == null || String(id) === keeperId) continue;
+      if (sessaoWuzapiAtiva(u)) continue;
+      if (!adminTok) continue;
+      try {
+        await fetch(`${config.wuzapiBaseUrl}/admin/users/${id}`, {
+          method: 'DELETE',
+          headers: { Authorization: adminTok },
+          signal: AbortSignal.timeout(12_000),
+        });
+      } catch (err) {
+        console.warn('[whatsapp] apagar duplicata WuzAPI:', err.message);
+      }
+    }
+    cacheAdminUsersSvc = { at: 0, users: null };
+    await new Promise((r) => setTimeout(r, 500));
+    usersWuz = await adminUsersWuzapi({ forcar: true });
+    daFilial = daMesmaFilial(usersWuz);
   }
-  const tokenConhecidoNoWuzapi = Boolean(
-    tokenAtual && usersWuz.some((u) => tokenNaoEAdmin(u.token) === tokenAtual)
+
+  const dedicado = daFilial.find((u) => sessaoWuzapiAtiva(u)) || daFilial[0] || null;
+  if (dedicado) {
+    const tok = tokenNaoEAdmin(dedicado.token || dedicado.Token);
+    if (tok) {
+      await gravarTokenFilialSeDiferente(atual.id, tok);
+      return {
+        token: tok,
+        criado: false,
+        regenerado: false,
+        compartilhado: false,
+        nome_wuzapi: dedicado.name || dedicado.Name || nomeUser,
+        precisa_conectar: !sessaoWuzapiAtiva(dedicado),
+      };
+    }
+  }
+
+  const tokenExisteNoWuzapi = Boolean(
+    tokenAtual && usersWuz.some((u) => tokenNaoEAdmin(u.token || u.Token) === tokenAtual)
   );
-  const orfao = Boolean(tokenAtual && usersWuz.length > 0 && !tokenConhecidoNoWuzapi);
-
-  let precisaNovo = opts.forcarNovo || !tokenAtual || compartilhado || orfao;
-
-  if (!precisaNovo) {
+  // Token no cadastro sem usuário no WuzAPI = órfão (401). Não reutilizar.
+  if (tokenAtual && (tokenExisteNoWuzapi || usersWuz.length === 0) && !compartilhado) {
     return {
       token: tokenAtual,
       criado: false,
       regenerado: false,
       compartilhado: false,
       nome_wuzapi: nomeUser,
-      precisa_conectar: false,
+      precisa_conectar: true,
     };
   }
 
-  // Nunca reaproveita usuário WuzAPI de outra unidade, nem sessão já logada
-  // com outro chip. Token compartilhado / “Gerar de novo” sempre cria usuário novo.
-  let token = null;
-  let origem = 'criado';
-  let criadoNoWuzapi = false;
-  let nomeGravado = nomeUser;
-
-  if (!opts.forcarNovo && !compartilhado) {
-    const nomesOk = new Set([nomeUser, ...nomesAntigosUsuarioWuzapi(atual)]);
-    const dedicado = usersWuz.find((u) => nomesOk.has(String(u.name || u.Name || '').trim()));
-    const cand = tokenNaoEAdmin(dedicado?.token);
-    if (cand && !(await tokenUsadoPorOutraFilial(atual.id, cand))) {
-      const phoneUser = limparTelefone(
-        dedicado.jid || dedicado.JID || dedicado.phone || dedicado.Phone
-      );
-      const outroChip = phoneUser ? await chipUsadoPorOutraFilial(atual.id, phoneUser) : null;
-      const ehChipDesta = chipsWhatsappIguais(atual.whatsapp, phoneUser);
-      const ocupado = Boolean(
-        dedicado.loggedIn === true
-        || dedicado.LoggedIn === true
-        || (phoneUser && phoneUser.length >= 10)
-      );
-      if ((!outroChip || ehChipDesta) && (!ocupado || ehChipDesta)) {
-        token = cand;
-        origem = 'existente';
-        nomeGravado = String(dedicado.name || dedicado.Name || nomeUser).trim();
-      }
-    }
+  const admin = tokenWuzapiUtil(config.wuzapiAdminToken);
+  if (!admin || !config.wuzapiBaseUrl) {
+    const err = new Error(
+      'Servidor do WhatsApp sem configuração no backend. Avise o suporte — não é preciso gerar token na tela.'
+    );
+    err.status = 503;
+    throw err;
   }
 
-  if (!token) {
-    const admin = tokenWuzapiUtil(config.wuzapiAdminToken);
-    if (!admin || !config.wuzapiBaseUrl) {
-      const err = new Error(
-        'WUZAPI_ADMIN_TOKEN ou WUZAPI_BASE_URL ausente no backend. Configure no Render e tente Gerar token de novo.'
-      );
-      err.status = 503;
-      throw err;
+  const token = `pneu_${atual.id}_${crypto.randomBytes(8).toString('hex')}`;
+  const res = await fetch(`${config.wuzapiBaseUrl}/admin/users`, {
+    method: 'POST',
+    headers: {
+      Authorization: admin,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ name: nomeUser, token }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  const raw = await res.text();
+  if (!res.ok) {
+    const again = await adminUsersWuzapi({ forcar: true });
+    const existente = (again || []).find((u) => {
+      const name = String(u.name || u.Name || '').trim();
+      return nomesOk.has(name) || name.startsWith(prefixoId);
+    });
+    const tokExistente = tokenNaoEAdmin(existente?.token || existente?.Token);
+    if (tokExistente) {
+      await gravarTokenFilialSeDiferente(atual.id, tokExistente);
+      return {
+        token: tokExistente,
+        criado: false,
+        regenerado: false,
+        compartilhado: false,
+        nome_wuzapi: existente.name || existente.Name || nomeUser,
+        precisa_conectar: true,
+      };
     }
-
-    const postUser = async (nome, tok) => {
-      const res = await fetch(`${config.wuzapiBaseUrl}/admin/users`, {
-        method: 'POST',
-        headers: {
-          Authorization: admin,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ name: nome, token: tok }),
-        signal: AbortSignal.timeout(15_000),
-      });
-      const raw = await res.text();
-      return { res, raw };
-    };
-
-    token = `pneu_${atual.id}_${crypto.randomBytes(8).toString('hex')}`;
-    try {
-      let ultimoRaw = '';
-      let ok = false;
-      for (let i = 0; i < 3 && !ok; i++) {
-        if (i > 0) await new Promise((r) => setTimeout(r, 1500 * i));
-        let { res, raw } = await postUser(nomeUser, token);
-        ultimoRaw = raw;
-        if (!res.ok) {
-          const nomeUnico = `Pneu${atual.id}-${crypto.randomBytes(3).toString('hex')}`;
-          token = `pneu_${atual.id}_${crypto.randomBytes(8).toString('hex')}`;
-          ({ res, raw } = await postUser(nomeUnico, token));
-          ultimoRaw = raw;
-          if (res.ok) {
-            nomeGravado = nomeUnico;
-            ok = true;
-          }
-        } else {
-          ok = true;
-        }
-      }
-      if (!ok) {
-        const err = new Error(
-          ehErroDbInternoWuzapi(ultimoRaw)
-            ? 'O servidor do WhatsApp está com o banco interno fora. Nada foi apagado nas filiais. Recrie o WuzAPI no servidor dele sem apagar o volume — o token do Render não é o problema.'
-            : (`Não foi possível criar usuário no WuzAPI. `
-              + (ultimoRaw ? String(ultimoRaw).slice(0, 160) : 'Tente Conectar chip de novo em instantes.'))
-        );
-        err.status = 503;
-        err.infraWuzapi = ehErroDbInternoWuzapi(ultimoRaw);
-        throw err;
-      }
-      criadoNoWuzapi = true;
-      origem = 'criado';
-    } catch (err) {
-      if (err.status) throw err;
-      const e = new Error(
-        ehErroDbInternoWuzapi(err.message)
-          ? 'O servidor do WhatsApp está com o banco interno fora. Nada foi apagado nas filiais.'
-          : `WuzAPI indisponível ao gerar token: ${err.message}`
-      );
-      e.status = 503;
-      e.infraWuzapi = true;
-      throw e;
-    }
+    const err = new Error(
+      ehErroDbInternoWuzapi(raw)
+        ? 'O servidor do WhatsApp está com o banco interno fora. Nada foi apagado nas filiais.'
+        : (`Não foi possível criar a sessão no servidor do WhatsApp. `
+          + (raw ? String(raw).slice(0, 160) : 'Tente Conectar chip de novo em instantes.'))
+    );
+    err.status = 503;
+    err.infraWuzapi = ehErroDbInternoWuzapi(raw);
+    throw err;
   }
 
-  // Nunca apaga número/grupo da unidade — só o disconnect explícito faz isso.
+  let dataCreate = {};
+  try { dataCreate = raw ? JSON.parse(raw) : {}; } catch { dataCreate = {}; }
+  const tokCreate = tokenNaoEAdmin(
+    dataCreate?.token || dataCreate?.Token || dataCreate?.data?.token || dataCreate?.data?.Token
+  );
+
+  await new Promise((r) => setTimeout(r, 600));
+  const confirmados = await adminUsersWuzapi({ forcar: true });
+  const criadoUser = (confirmados || []).find((u) => {
+    const name = String(u.name || u.Name || '').trim();
+    return name === nomeUser || nomesOk.has(name) || name.startsWith(prefixoId);
+  });
+  const tokReal = tokenNaoEAdmin(criadoUser?.token || criadoUser?.Token) || tokCreate || token;
+
   await db.prepare(`
     UPDATE filiais SET
       wuzapi_token = ?,
       updated_at = NOW()
     WHERE id = ?
-  `).run(token, atual.id);
+  `).run(tokReal, atual.id);
 
   return {
-    token,
-    criado: criadoNoWuzapi || origem === 'criado',
-    regenerado: Boolean(compartilhado || opts.forcarNovo || orfao),
-    compartilhado: Boolean(compartilhado),
-    nome_wuzapi: nomeGravado,
+    token: tokReal,
+    criado: true,
+    regenerado: false,
+    compartilhado: false,
+    nome_wuzapi: criadoUser?.name || criadoUser?.Name || nomeUser,
     precisa_conectar: true,
-    mensagem: (compartilhado || orfao)
-      ? `Token exclusivo gerado para ${atual.nome}. Conecte o QR com o chip desta filial.`
-      : `Token do chatbot criado para ${atual.nome}. Conecte / QR para iniciar.`,
+  };
+}
+
+function usuariosWuzapiDestaFilial(filial, users) {
+  const prefixoId = `Pneu${filial.id}-`;
+  const nomeAtual = nomeUsuarioWuzapiFilial(filial);
+  const tokenAtual = tokenNaoEAdmin(filial.wuzapi_token);
+  return (users || []).filter((u) => {
+    const name = String(u.name || u.Name || '').trim();
+    const tok = tokenNaoEAdmin(u.token || u.Token);
+    if (name === nomeAtual || name.startsWith(prefixoId)) return true;
+    if (tokenAtual && tok && tok === tokenAtual) return true;
+    return false;
+  });
+}
+
+async function apagarUsuarioWuzapi(idUser, admin) {
+  if (idUser == null || !admin) return false;
+  try {
+    const res = await fetch(`${config.wuzapiBaseUrl}/admin/users/${idUser}`, {
+      method: 'DELETE',
+      headers: { Authorization: admin },
+      signal: AbortSignal.timeout(12_000),
+    });
+    return res.ok || res.status === 404;
+  } catch (err) {
+    console.warn('[whatsapp] apagar usuário WuzAPI:', err.message);
+    return false;
+  }
+}
+
+/**
+ * Apaga a sessão WuzAPI desta unidade e cria token novo.
+ * Só mexe em Pneu{id}-* desta filial — não toca Unaí/Caldas/outras.
+ */
+export async function recriarUsuarioWuzapiFilial(filial) {
+  if (!filial?.id) throw new Error('Filial inválida para token WhatsApp');
+  const existente = recriarLockPorFilial.get(Number(filial.id));
+  if (existente) return existente;
+  const p = recriarUsuarioWuzapiFilialInterno(filial).finally(() => {
+    if (recriarLockPorFilial.get(Number(filial.id)) === p) {
+      recriarLockPorFilial.delete(Number(filial.id));
+    }
+  });
+  recriarLockPorFilial.set(Number(filial.id), p);
+  return p;
+}
+
+async function recriarUsuarioWuzapiFilialInterno(filial) {
+  const db = getDb();
+  const atual = await db.prepare(`
+    SELECT id, nome, codigo, wuzapi_token FROM filiais WHERE id = ?
+  `).get(filial.id);
+  if (!atual) throw new Error('Filial não encontrada');
+
+  const admin = tokenWuzapiUtil(config.wuzapiAdminToken);
+  if (!admin || !config.wuzapiBaseUrl) {
+    const err = new Error('Servidor do WhatsApp sem configuração no backend.');
+    err.status = 503;
+    throw err;
+  }
+
+  const nomeUser = nomeUsuarioWuzapiFilial(atual);
+  for (let round = 0; round < 3; round++) {
+    const users = await adminUsersWuzapi({ forcar: true });
+    const daFilial = usuariosWuzapiDestaFilial(atual, users);
+    if (!daFilial.length) break;
+    for (const u of daFilial) {
+      await apagarUsuarioWuzapi(u.id ?? u.Id ?? u.ID, admin);
+    }
+    cacheAdminUsersSvc = { at: 0, users: null };
+    await new Promise((r) => setTimeout(r, 900));
+  }
+  const ainda = usuariosWuzapiDestaFilial(atual, await adminUsersWuzapi({ forcar: true }));
+  if (ainda.length) {
+    const err = new Error('Não consegui apagar a sessão antiga desta unidade. Tente Conectar de novo em instantes.');
+    err.status = 503;
+    throw err;
+  }
+  await new Promise((r) => setTimeout(r, 400));
+
+  const token = `pneu_${atual.id}_${crypto.randomBytes(8).toString('hex')}`;
+  let res = await fetch(`${config.wuzapiBaseUrl}/admin/users`, {
+    method: 'POST',
+    headers: {
+      Authorization: admin,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ name: nomeUser, token }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  let raw = await res.text();
+  if (!res.ok) {
+    const usersRetry = await adminUsersWuzapi({ forcar: true });
+    const daFilialRetry = usuariosWuzapiDestaFilial(atual, usersRetry);
+    for (const u of daFilialRetry) {
+      await apagarUsuarioWuzapi(u.id ?? u.Id ?? u.ID, admin);
+    }
+    cacheAdminUsersSvc = { at: 0, users: null };
+    await new Promise((r) => setTimeout(r, 1200));
+    const nomeAlt = `${nomeUser}${Date.now().toString(36).slice(-3)}`;
+    res = await fetch(`${config.wuzapiBaseUrl}/admin/users`, {
+      method: 'POST',
+      headers: {
+        Authorization: admin,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ name: nomeAlt, token }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    raw = await res.text();
+  }
+  if (!res.ok) {
+    const err = new Error(
+      ehErroDbInternoWuzapi(raw)
+        ? 'O servidor do WhatsApp está com o banco interno fora. Tente de novo em instantes.'
+        : (`Não foi possível criar a sessão nova. ${raw ? String(raw).slice(0, 160) : 'Tente Conectar de novo.'}`)
+    );
+    err.status = 503;
+    err.infraWuzapi = ehErroDbInternoWuzapi(raw);
+    throw err;
+  }
+
+  let dataCreate = {};
+  try { dataCreate = raw ? JSON.parse(raw) : {}; } catch { dataCreate = {}; }
+  const tokCreate = tokenNaoEAdmin(
+    dataCreate?.token || dataCreate?.Token || dataCreate?.data?.token || dataCreate?.data?.Token
+  ) || token;
+
+  await db.prepare(`
+    UPDATE filiais SET
+      wuzapi_token = ?,
+      whatsapp = NULL,
+      whatsapp_grupo = NULL,
+      whatsapp_alerta = NULL,
+      updated_at = NOW()
+    WHERE id = ?
+  `).run(tokCreate, atual.id);
+
+  cacheAdminUsersSvc = { at: 0, users: null };
+  await new Promise((r) => setTimeout(r, 1500));
+  return {
+    token: tokCreate,
+    criado: true,
+    regenerado: true,
+    nome_wuzapi: nomeUser,
+    precisa_conectar: true,
   };
 }
 
@@ -480,8 +765,20 @@ export async function enviarMensagemWhatsApp(phoneOrGroup, text, opts = {}) {
   if (!dest?.phone) throw new Error('Destino WhatsApp inválido');
   if (!text?.trim()) throw new Error('Mensagem vazia');
 
-  const tokens = await listarTokensEnvio(opts.filialId, opts.token);
-  if (!tokens.length || !config.wuzapiBaseUrl) {
+  const payload = {
+    Phone: dest.phone,
+    Body: text,
+  };
+  if (opts.linkPreview) payload.LinkPreview = true;
+
+  const data = await enviarNaSessaoFilial({
+    path: '/chat/send/text',
+    payload,
+    timeoutMs: 20_000,
+    filialId: opts.filialId,
+    token: opts.token,
+  });
+  if (data?.skipped) {
     console.warn('[whatsapp] WuzAPI não configurado — mensagem não enviada:', dest.logKey);
     return {
       skipped: true,
@@ -490,52 +787,7 @@ export async function enviarMensagemWhatsApp(phoneOrGroup, text, opts = {}) {
       Body: text,
     };
   }
-
-  const payload = {
-    Phone: dest.phone,
-    Body: text,
-  };
-  if (opts.linkPreview) payload.LinkPreview = true;
-
-  let lastErr = null;
-  for (let i = 0; i < tokens.length; i += 1) {
-    const token = tokens[i];
-    const tSend = performance.now();
-    const res = await fetch(`${config.wuzapiBaseUrl}/chat/send/text`, {
-      method: 'POST',
-      headers: headersUsuarioWuzapi(token),
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(8_000),
-    });
-
-    const raw = await res.text();
-    let data;
-    try {
-      data = raw ? JSON.parse(raw) : {};
-    } catch {
-      data = { raw };
-    }
-
-    if (res.ok) {
-      // Nunca grava token “emprestado” (.env / outra sessão) na filial —
-      // cada unidade mantém só o token que ela provisionou.
-      if (performance.now() - tSend > 1500) {
-        console.warn('[whatsapp] envio lento', Math.round(performance.now() - tSend), 'ms');
-      }
-      return data;
-    }
-
-    const msg = data?.error || data?.erro || JSON.stringify(data);
-    lastErr = new Error(mensagemErroWuzapi(res.status, msg));
-    if (ehFalhaAuthWuzapi(res.status, msg) && i < tokens.length - 1) {
-      console.warn('[whatsapp] Token recusado — tentando outra sessão WuzAPI');
-      continue;
-    }
-    if (i < tokens.length - 1) continue;
-    throw lastErr;
-  }
-
-  throw lastErr || new Error('Falha ao enviar WhatsApp');
+  return data;
 }
 
 export async function enviarMensagemWhatsAppComLink(phone, text, opts = {}) {
@@ -554,80 +806,42 @@ export async function enviarDocumentoWhatsApp(phoneOrGroup, buffer, fileName, op
   if (!dest?.phone) throw new Error('Destino WhatsApp inválido');
   if (!buffer?.length) throw new Error('Documento vazio');
   const nome = String(fileName || 'documento.pdf').replace(/[^\w.\-]+/g, '_');
-  const mime = opts.mime || 'application/pdf';
-
-  const tokens = await listarTokensEnvio(opts.filialId, opts.token);
-  if (!tokens.length || !config.wuzapiBaseUrl) {
-    console.warn('[whatsapp] WuzAPI não configurado — documento não enviado:', dest.logKey);
-    return {
-      skipped: true,
-      reason: 'wuzapi_nao_configurado',
-      Phone: dest.phone,
-      FileName: nome,
-    };
-  }
 
   const b64 = Buffer.from(buffer).toString('base64');
-  // WuzAPI exige data URI como application/octet-stream (não application/pdf)
   const dataUri = `data:application/octet-stream;base64,${b64}`;
   const payload = {
     Phone: dest.phone,
     FileName: nome,
     Document: dataUri,
   };
-  // Caption opcional — algumas versões WuzAPI rejeitam; enviamos só se pedida
   if (opts.caption) payload.Caption = String(opts.caption).slice(0, 900);
 
-  let lastErr = null;
-  for (let i = 0; i < tokens.length; i += 1) {
-    const token = tokens[i];
-    let res = await fetch(`${config.wuzapiBaseUrl}/chat/send/document`, {
-      method: 'POST',
-      headers: headersUsuarioWuzapi(token),
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(90_000),
-    });
+  const enviarDoc = (body) => enviarNaSessaoFilial({
+    path: '/chat/send/document',
+    payload: body,
+    timeoutMs: 90_000,
+    filialId: opts.filialId,
+    token: opts.token,
+  });
 
-    let raw = await res.text();
-    let data;
-    try {
-      data = raw ? JSON.parse(raw) : {};
-    } catch {
-      data = { raw };
+  try {
+    const data = await enviarDoc(payload);
+    if (data?.skipped) {
+      console.warn('[whatsapp] WuzAPI não configurado — documento não enviado:', dest.logKey);
+      return {
+        skipped: true,
+        reason: 'wuzapi_nao_configurado',
+        Phone: dest.phone,
+        FileName: nome,
+      };
     }
-
-    // Retry sem Caption se a API reclamar do campo
-    if (!res.ok && payload.Caption && /caption|unknown|invalid/i.test(JSON.stringify(data))) {
-      const semCaption = { Phone: dest.phone, FileName: nome, Document: dataUri };
-      res = await fetch(`${config.wuzapiBaseUrl}/chat/send/document`, {
-        method: 'POST',
-        headers: headersUsuarioWuzapi(token),
-        body: JSON.stringify(semCaption),
-        signal: AbortSignal.timeout(90_000),
-      });
-      raw = await res.text();
-      try {
-        data = raw ? JSON.parse(raw) : {};
-      } catch {
-        data = { raw };
-      }
+    return data;
+  } catch (err) {
+    if (payload.Caption && /caption|unknown|invalid/i.test(err.message || '')) {
+      return enviarDoc({ Phone: dest.phone, FileName: nome, Document: dataUri });
     }
-
-    if (res.ok) {
-      return data;
-    }
-
-    const msg = data?.error || data?.erro || JSON.stringify(data);
-    lastErr = new Error(mensagemErroWuzapi(res.status, msg));
-    if (ehFalhaAuthWuzapi(res.status, msg) && i < tokens.length - 1) {
-      console.warn('[whatsapp] Token recusado (documento) — tentando outra sessão');
-      continue;
-    }
-    if (i < tokens.length - 1) continue;
-    throw lastErr;
+    throw err;
   }
-
-  throw lastErr || new Error('Falha ao enviar documento WhatsApp');
 }
 
 /**
