@@ -115,9 +115,16 @@ const dados = {
     { data: '2026-09-17', placa: 'AP7C89', posicao: '3DE', menor_sulco: 9.2, status: 'OK' },
     { data: '2026-09-17', placa: 'AP7C89', posicao: '1E', menor_sulco: 10, status: 'OK' },
   ],
-  estoque: [],
-  em_recapagem: [],
-  historico: [],
+  estoque: [
+    { fogo: '8821', marca: 'Michelin', modelo: 'XZE2', medida: '295/80', padrao: 'Misto', vida: 'Novo', sulco: 14 },
+    { fogo: '8822', marca: 'Goodyear', modelo: 'KMAX', medida: '295/80', padrao: 'Direcional', vida: '1a recap', sulco: 11 },
+  ],
+  em_recapagem: [
+    { fogo: '7704', marca: 'Pirelli', modelo: 'FH01', vida: '1a recap', sulco: 3.2, placa_origem: 'BH1A23' },
+  ],
+  historico: [
+    { data: '2026-09-18', tipo_label: 'Envio a recap', fogo: '7704', placa: 'BH1A23', posicao: '2EE', detalhes: 'Retirado para recap' },
+  ],
   descarte: [],
 };
 

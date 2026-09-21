@@ -22,12 +22,28 @@ const C = {
   chassis: '#c5d0c8',
 };
 
+const PNEU_W = 15;
+const PNEU_H = 20;
+
 /** Vista de cima truck 10: (codigo, dx, dy) — dy cresce da frente para trás */
 const LAYOUT_10 = [
   ['1E', 28, 22], ['1D', 78, 22],
   ['2EE', 16, 52], ['2EI', 36, 52], ['2DI', 70, 52], ['2DE', 90, 52],
   ['3EE', 16, 82], ['3EI', 36, 82], ['3DI', 70, 82], ['3DE', 90, 82],
 ];
+
+const LAYOUT_BOX = (() => {
+  const xs = LAYOUT_10.map(([, dx]) => dx);
+  const ys = LAYOUT_10.map(([, , dy]) => dy);
+  const minX = Math.min(...xs);
+  const minY = Math.min(...ys);
+  return {
+    minX,
+    minY,
+    w: Math.max(...xs) + PNEU_W - minX,
+    h: Math.max(...ys) + PNEU_H - minY,
+  };
+})();
 
 const POS_ALIAS = {
   DE: '1E', DD: '1D',
@@ -94,11 +110,11 @@ function txt(doc, str, x, y, opts = {}) {
 }
 
 function drawPneu(doc, x, y, cor, label, mmTxt) {
-  rrect(doc, x, y, 15, 20, 3, cor, cor === C.ok ? '#14532d' : null);
+  rrect(doc, x, y, PNEU_W, PNEU_H, 3, cor, cor === C.ok ? '#14532d' : null);
   doc.fillColor(C.branco).font('Helvetica-Bold').fontSize(5);
-  txt(doc, label, x, y + 3.2, { width: 15, align: 'center' });
+  txt(doc, label, x, y + 3.2, { width: PNEU_W, align: 'center' });
   doc.fontSize(4.8);
-  txt(doc, mmTxt, x, y + 11.2, { width: 15, align: 'center' });
+  txt(doc, mmTxt, x, y + 11.2, { width: PNEU_W, align: 'center' });
 }
 
 /** Card no estilo do preview: desenho centralizado, texto só na faixa de baixo. */
@@ -126,15 +142,25 @@ function drawCardCaminhao(doc, x, y, w, h, veiculo) {
   doc.fillColor(fillStatus(status)).font('Helvetica-Bold').fontSize(7.5);
   txt(doc, status, x + 8, y + h - 12, { width: w - 16, align: 'right' });
 
-  const ox = x + (w - 105) / 2;
-  const diagramTop = y + 8;
+  const frenteH = 11;
   doc.fillColor(C.mudo).font('Helvetica').fontSize(6);
-  txt(doc, 'FRENTE', x, diagramTop, { width: w, align: 'center' });
+  txt(doc, 'FRENTE', x, y + 5, { width: w, align: 'center' });
 
-  const chassisTop = diagramTop + 12;
-  const chassisH = h - footer - chassisTop + y - 6;
+  const areaTop = y + frenteH + 2;
+  const areaBot = y + h - footer - 4;
+  const areaH = areaBot - areaTop;
+  const pad = 8;
+  const ox = x + (w - LAYOUT_BOX.w) / 2 - LAYOUT_BOX.minX;
+  const oy = areaTop + (areaH - LAYOUT_BOX.h) / 2 - LAYOUT_BOX.minY;
+
   doc.lineWidth(1.1).strokeColor(C.chassis)
-    .roundedRect(ox + 18, chassisTop, 70, Math.max(40, chassisH), 9).stroke();
+    .roundedRect(
+      ox + LAYOUT_BOX.minX - pad,
+      oy + LAYOUT_BOX.minY - pad,
+      LAYOUT_BOX.w + pad * 2,
+      LAYOUT_BOX.h + pad * 2,
+      10,
+    ).stroke();
 
   const byPos = pneusPorPos(veiculo.pneus);
   for (const [codigo, dx, dy] of LAYOUT_10) {
@@ -142,7 +168,7 @@ function drawCardCaminhao(doc, x, y, w, h, veiculo) {
     const cor = p ? fillStatus(p.status_sulco || p.status_label) : C.cinza;
     const mmTxt = p?.menor_sulco != null ? String(p.menor_sulco) : '-';
     const label = codigo.length > 2 ? codigo.slice(-2) : codigo;
-    drawPneu(doc, ox + dx, diagramTop + 8 + dy, cor, label, mmTxt);
+    drawPneu(doc, ox + dx, oy + dy, cor, label, mmTxt);
   }
 }
 
@@ -381,6 +407,107 @@ export function desenharPaginaAcoes(doc, dados) {
   });
 }
 
+function temOperacaoExtra(dados) {
+  return Boolean(
+    (dados.estoque || []).length
+    || (dados.em_recapagem || []).length
+    || (dados.historico || []).length
+    || (dados.descarte || []).length
+  );
+}
+
+function drawLinhaOp(doc, x, y, w, cols) {
+  let cx = x;
+  cols.forEach((col) => {
+    doc.fillColor(col.cor || C.texto).font(col.bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(8);
+    txt(doc, col.txt, cx, y, { width: col.w, align: col.align || 'left' });
+    cx += col.w;
+  });
+}
+
+function drawBlocoLista(doc, x, y, w, titulo, hint, linhas, colunas) {
+  const h = 22 + linhas.length * 16 + 12;
+  rrect(doc, x, y, w, h, 8, C.card, C.linha);
+  doc.fillColor(C.texto).font('Helvetica-Bold').fontSize(11);
+  txt(doc, titulo, x + 10, y + 8);
+  doc.fillColor(C.mudo).font('Helvetica').fontSize(7.5);
+  txt(doc, hint, x + 10, y + 8, { width: w - 20, align: 'right' });
+  let yy = y + 26;
+  linhas.forEach((ln, i) => {
+    if (i % 2 === 0) rrect(doc, x + 6, yy - 2, w - 12, 15, 3, '#f8faf8', null);
+    drawLinhaOp(doc, x + 10, yy, w - 20, colunas(ln));
+    yy += 16;
+  });
+  return h + 8;
+}
+
+/**
+ * Só o que ainda não entrou nas páginas visuais: estoque, recap, movimentação, descarte.
+ * Medições, ações e diagnósticos ficam de fora — já foram enviados acima.
+ */
+export function desenharPaginaOperacao(doc, dados) {
+  if (!temOperacaoExtra(dados)) return false;
+  const W = doc.page.width;
+  const H = doc.page.height;
+  const margin = 12 * MM;
+  doc.rect(0, 0, W, H).fill(C.fundo);
+  cabecalho(
+    doc,
+    W,
+    'Operacao da semana — o que ainda nao apareceu',
+    'Estoque, recap, movimentacao e descarte. Medicoes, acoes e diagnosticos ja estao nas paginas anteriores.',
+  );
+
+  let y = 40 * MM;
+  const full = W - 2 * margin;
+
+  if ((dados.em_recapagem || []).length) {
+    y += drawBlocoLista(doc, margin, y, full, 'Em recapagem', `${dados.em_recapagem.length} pneu(s)`, dados.em_recapagem, (p) => [
+      { txt: p.fogo || '-', w: 90, bold: true },
+      { txt: [p.marca, p.modelo].filter(Boolean).join(' ') || '-', w: 180 },
+      { txt: p.vida || '-', w: 80 },
+      { txt: p.sulco != null ? `${p.sulco} mm` : '-', w: 70, bold: true },
+      { txt: p.placa_origem || '-', w: 90 },
+    ]);
+  }
+
+  if ((dados.estoque || []).length) {
+    y += drawBlocoLista(doc, margin, y, full, 'Estoque pronto para montar', `${dados.estoque.length} pneu(s)`, dados.estoque, (p) => [
+      { txt: p.fogo || '-', w: 90, bold: true },
+      { txt: [p.marca, p.modelo, p.medida].filter(Boolean).join(' ') || '-', w: 200 },
+      { txt: p.padrao || '-', w: 90 },
+      { txt: p.vida || '-', w: 70 },
+      { txt: p.sulco != null ? `${p.sulco} mm` : '-', w: 70, bold: true },
+    ]);
+  }
+
+  if ((dados.historico || []).length) {
+    y += drawBlocoLista(doc, margin, y, full, 'Movimentacoes da semana', `${dados.historico.length} evento(s)`, dados.historico.slice(0, 12), (h) => [
+      { txt: h.data ? String(h.data).slice(0, 10).split('-').reverse().join('/') : '-', w: 70 },
+      { txt: h.tipo_label || h.tipo || '-', w: 110, bold: true },
+      { txt: h.fogo || '-', w: 80 },
+      { txt: h.placa || '-', w: 80 },
+      { txt: h.posicao || '-', w: 50 },
+      { txt: String(h.detalhes || '-').slice(0, 40), w: 220, cor: C.mudo },
+    ]);
+  }
+
+  if ((dados.descarte || []).length) {
+    y += drawBlocoLista(doc, margin, y, full, 'Descarte', `${dados.descarte.length} pneu(s)`, dados.descarte, (p) => [
+      { txt: p.fogo || '-', w: 90, bold: true },
+      { txt: [p.marca, p.modelo].filter(Boolean).join(' ') || '-', w: 180 },
+      { txt: p.tratamento || '-', w: 160 },
+      { txt: p.obs || '-', w: 180, cor: C.mudo },
+    ]);
+  }
+
+  doc.fillColor(C.mudo).font('Helvetica').fontSize(7);
+  txt(doc, 'Pneusistemma  ·  operacao da semana', W - margin - 180, H - 12, {
+    width: 180, align: 'right',
+  });
+  return true;
+}
+
 export function desenharRelatorioVisual(doc, dados) {
   const veiculos = (dados.frota || []).filter((v) => v.pneus?.length);
   const logs = (dados.medicoes_semana_lista || []).map((m) => ({
@@ -398,4 +525,8 @@ export function desenharRelatorioVisual(doc, dados) {
   });
   doc.addPage({ size: 'A4', layout: 'landscape', margins: { top: 0, bottom: 0, left: 0, right: 0 } });
   desenharPaginaAcoes(doc, dados);
+  if (temOperacaoExtra(dados)) {
+    doc.addPage({ size: 'A4', layout: 'landscape', margins: { top: 0, bottom: 0, left: 0, right: 0 } });
+    desenharPaginaOperacao(doc, dados);
+  }
 }
