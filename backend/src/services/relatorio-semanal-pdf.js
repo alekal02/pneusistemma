@@ -11,6 +11,7 @@ import {
   labelTratamentoDescarte,
   sqlOrderPosicao,
 } from '../pneus-layouts.js';
+import { desenharRelatorioVisual } from './relatorio-frota-visual-pdf.js';
 
 function pad2(n) {
   return String(n).padStart(2, '0');
@@ -618,7 +619,11 @@ function createPager(doc) {
   let pageNo = 1;
 
   const addPage = () => {
-    doc.addPage({ size: 'A4', layout: 'landscape' });
+    doc.addPage({
+      size: 'A4',
+      layout: 'landscape',
+      margins: { top: 40, bottom: 40, left: 32, right: 32 },
+    });
     pageNo += 1;
   };
 
@@ -634,6 +639,7 @@ function stampFooters(doc, dados) {
   const total = range.count;
   for (let i = 0; i < total; i += 1) {
     doc.switchToPage(range.start + i);
+    if (!doc.page.margins.left) continue;
     const left = doc.page.margins.left;
     const w = contentWidth(doc);
     const y = doc.page.height - 26;
@@ -1074,7 +1080,7 @@ export function gerarPdfRelatorioSemanal(dados) {
     const doc = new PDFDocument({
       size: 'A4',
       layout: 'landscape',
-      margins: { top: 36, bottom: 36, left: 32, right: 32 },
+      margins: { top: 0, bottom: 0, left: 0, right: 0 },
       bufferPages: true,
       autoFirstPage: true,
       info: {
@@ -1088,103 +1094,22 @@ export function gerarPdfRelatorioSemanal(dados) {
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
+    desenharRelatorioVisual(doc, dados);
+
+    doc.addPage({
+      size: 'A4',
+      layout: 'landscape',
+      margins: { top: 40, bottom: 40, left: 32, right: 32 },
+    });
     const pager = createPager(doc);
     const r = dados.resumo;
     const x0 = doc.page.margins.left;
     const w = contentWidth(doc);
-    const savedBottom = doc.page.margins.bottom;
 
-    // ── Cabecalho ──────────────────────────────────────
-    doc.rect(0, 0, doc.page.width, 72).fill(COLORS.brand);
-    doc.page.margins.bottom = 0;
-    doc.fillColor(COLORS.white).font('Helvetica-Bold').fontSize(16)
-      .text('Relatorio da frota — visual + acoes + diagnosticos', x0, 16, { width: w, lineBreak: false });
-    doc.font('Helvetica').fontSize(8).fillColor('#99f6e4')
-      .text('Controle de desgaste de pneus - apoio a decisao do gerente', x0, 38, {
-        width: w,
-        lineBreak: false,
-      });
-    doc.font('Helvetica-Bold').fontSize(9).fillColor(COLORS.white)
-      .text(
-        fitWidth(doc, `${dados.filial.nome}  (${dados.filial.codigo})`, w * 0.55, 9, true),
-        x0,
-        54,
-        { width: w * 0.55, lineBreak: false }
-      );
-    doc.font('Helvetica').fontSize(9)
-      .text(`Semana ${dados.periodo.label}`, x0, 54, { width: w, align: 'right', lineBreak: false });
-    doc.page.margins.bottom = savedBottom;
-    doc.y = 84;
-
-    doc.page.margins.bottom = 0;
-    doc.fillColor(COLORS.muted).font('Helvetica').fontSize(7.5);
-    const meta = [
-      `Gerado em ${formatarDataHoraBrasil(dados.gerado_em)}`,
-      dados.gerado_por ? `por ${dados.gerado_por}` : null,
-      `Limites: critico <= ${dados.limites.critico_mm} mm | monitorar <= ${dados.limites.monitorar_ate_mm} mm | prazo recap ${dados.limites.prazo_recap_dias} d`,
-    ].filter(Boolean).join('   |   ');
-    doc.text(asciiSafe(meta), x0, doc.y, { width: w, lineBreak: false });
-    doc.page.margins.bottom = savedBottom;
-    doc.y = 98;
-
-    // ── 1. Resumo ──────────────────────────────────────
-    sectionTitle(doc, pager, '1', 'Resumo executivo');
-    drawKpiGrid(doc, pager, [
-      { label: 'VEICULOS', value: r.veiculos, accent: COLORS.brand, bg: COLORS.brandSoft },
-      { label: 'PNEUS MONTADOS', value: r.pneus_montados, accent: COLORS.ink, bg: COLORS.softAlt },
-      { label: 'ESTOQUE', value: r.pneus_estoque, accent: COLORS.ink, bg: COLORS.softAlt },
-      { label: 'EM RECAP', value: r.pneus_em_recapagem ?? 0, accent: COLORS.alerta, bg: COLORS.alertaBg },
-      { label: 'DESCARTE', value: r.pneus_descarte, accent: COLORS.muted, bg: COLORS.soft },
-      { label: 'OK', value: r.sulco_ok, accent: COLORS.ok, bg: COLORS.okBg },
-      { label: 'MONITORAR', value: r.sulco_monitorar, accent: COLORS.alerta, bg: COLORS.alertaBg },
-      { label: 'CRITICO', value: r.sulco_critico, accent: COLORS.critico, bg: COLORS.criticoBg },
-      { label: 'SEM MEDICAO', value: r.sem_medicao, accent: COLORS.muted, bg: COLORS.softAlt },
-      { label: 'TROCAR', value: r.acao_trocar, accent: COLORS.critico, bg: COLORS.criticoBg },
-      { label: 'RODIZIO', value: r.acao_rodizio, accent: COLORS.brand, bg: COLORS.brandSoft },
-      { label: 'MEDICOES SEMANA', value: r.medicoes_semana, accent: COLORS.brand, bg: COLORS.brandSoft },
-    ]);
-
-    drawKpiGrid(doc, pager, [
-      { label: 'MOVIMENTACOES SEMANA', value: r.movimentacoes_semana ?? 0, accent: COLORS.brand, bg: COLORS.brandSoft },
-      { label: 'ATRASADOS (>=7 DIAS)', value: r.veiculos_atrasados_medicao, accent: COLORS.alerta, bg: COLORS.alertaBg },
-      { label: 'DESCARTE PENDENTE', value: r.descarte_aguardando, accent: COLORS.critico, bg: COLORS.criticoBg },
-      { label: 'CUSTO MONTADO', value: formatMoney(r.custo_montado), accent: COLORS.ink, bg: COLORS.softAlt },
-      { label: 'CUSTO ESTOQUE+RECAP', value: formatMoney(r.custo_estoque), accent: COLORS.ink, bg: COLORS.softAlt },
-    ]);
-
-    // ── 2. Frota visual ────────────────────────────────
-    sectionTitle(doc, pager, '2', 'Frota visual — caminhões lado a lado');
-    mutedLine(doc, pager, 'Cores = sulco (verde OK, amarelo alerta, vermelho critico). Clique no painel para o desenho completo.');
-    const comPneus = (dados.frota || []).filter((v) => v.pneus?.length);
-    const semPneus = (dados.frota || []).filter((v) => !v.pneus?.length);
-    if (!dados.frota?.length) {
-      mutedLine(doc, pager, 'Nenhum veiculo ativo nesta unidade.');
-    } else {
-      if (comPneus.length) drawTruckGrid(doc, pager, comPneus);
-      if (semPneus.length) {
-        subTitle(doc, pager, `Veiculos sem pneus montados (${semPneus.length})`, COLORS.muted);
-        drawTable(doc, pager, [
-          { key: 'placa', label: 'Placa', w: 0.22 },
-          { key: 'apelido', label: 'Apelido', w: 0.28 },
-          { key: 'tipo', label: 'Tipo', w: 0.30 },
-          { key: 'km', label: 'KM', w: 0.20, align: 'right' },
-        ], semPneus.map((v) => ({
-          placa: v.placa,
-          apelido: v.apelido || '-',
-          tipo: v.tipo || '-',
-          km: formatNum(v.km_atual),
-        })));
-      }
-    }
-
-    // ── 3. Acoes e diagnosticos ────────────────────────
-    sectionTitle(doc, pager, '3', 'Acoes e diagnosticos');
-    const acoesPdf = [
-      ...(dados.prioridades?.troca || []),
-      ...(dados.prioridades?.monitorar || []),
-      ...(dados.prioridades?.rodizio || []),
-    ];
-    drawAcoesDiagnosticos(doc, pager, acoesPdf, dados.diagnosticos || []);
+    sectionTitle(doc, pager, '4', 'Detalhes da semana');
+    mutedLine(doc, pager, asciiSafe(
+      `Gerado em ${formatarDataHoraBrasil(dados.gerado_em)}${dados.gerado_por ? ` por ${dados.gerado_por}` : ''}  |  Limites: critico <= ${dados.limites.critico_mm} mm | monitorar <= ${dados.limites.monitorar_ate_mm} mm`,
+    ));
 
     if ((dados.em_recapagem || []).length) {
       subTitle(doc, pager, `Em recapagem (${dados.em_recapagem.length})`, COLORS.alerta);
