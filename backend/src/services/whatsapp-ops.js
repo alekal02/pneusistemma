@@ -4,6 +4,8 @@
 import { getDb } from '../database.js';
 import { ehViolacaoUnique } from '../db-utils.js';
 import { getLimites, classificarSulco, limitesDoVeiculo, menorSulco } from '../limites.js';
+import { diagnosticarPerfil, sugerirAcao, desgastePorKm } from '../diagnostico.js';
+import { notificarGerentesAposMedicao } from './alertas-whatsapp.js';
 import { normalizarTipoVeiculo } from '../fix-encoding.js';
 import { comRetryFogoUnico } from '../numero-fogo.js';
 import {
@@ -15,6 +17,7 @@ import {
   validarMontagem,
   aplicarLayoutPneus,
   layoutPadraoPorTipo,
+  papelPosicao,
 } from '../pneus-layouts.js';
 
 function erroOps(mensagem, status) {
@@ -1004,6 +1007,331 @@ export async function registrarDescarte({ filialId, pneuId, motivo = null, pneuE
     placa: pneu.placa || null,
     substituto: montagem,
   };
+}
+
+const SULCO_MIN_MM = 0;
+const SULCO_MAX_MM = 40;
+
+function pontosDeValores(valores) {
+  const v = Array.isArray(valores) ? valores : [];
+  return {
+    sulco_externo: v[0] ?? null,
+    sulco_central: v[1] ?? null,
+    sulco_interno: v[2] ?? null,
+    sulco_auxiliar: v[3] ?? null,
+  };
+}
+
+function formatarValoresSulco(valores) {
+  return (valores || []).map((n) => String(n)).join('/');
+}
+
+export function validarValoresSulco(valores) {
+  if (!Array.isArray(valores) || (valores.length !== 3 && valores.length !== 4)) {
+    return 'Informe 3 ou 4 valores de sulco (ex.: 14,14,14)';
+  }
+  for (const n of valores) {
+    if (!Number.isFinite(n) || n < SULCO_MIN_MM || n > SULCO_MAX_MM) {
+      return `Sulco inválido (${n}). Use valores de ${SULCO_MIN_MM} a ${SULCO_MAX_MM} mm`;
+    }
+  }
+  return null;
+}
+
+/**
+ * Valida lote de medições WhatsApp (filial, layout, pneu montado, valores).
+ * Não grava.
+ */
+export async function validarMedicoesWhatsApp({ filialId, veiculoId, linhas }) {
+  const db = getDb();
+  const veiculo = await db.prepare(`
+    SELECT * FROM veiculos WHERE id = ? AND filial_id = ? AND ativo = 1
+  `).get(veiculoId, filialId);
+  if (!veiculo) throw erroOps('Veículo não encontrado nesta unidade', 404);
+  assertVeiculoOperacional(veiculo);
+
+  const layout = getLayout(veiculo.layout_pneus || LAYOUT_PADRAO);
+  const ok = [];
+  const erros = [];
+  const vistos = new Set();
+
+  for (const linha of linhas || []) {
+    const pos = String(linha.posicao || '').trim().toUpperCase();
+    if (!pos) continue;
+    if (vistos.has(pos)) {
+      const idx = ok.findIndex((i) => i.posicao === pos);
+      if (idx >= 0) ok.splice(idx, 1);
+      const eidx = erros.findIndex((i) => i.posicao === pos);
+      if (eidx >= 0) erros.splice(eidx, 1);
+    }
+    vistos.add(pos);
+
+    if (linha.erro === 'posicao_desconhecida' || !layout.posicoes.includes(pos)) {
+      erros.push({ posicao: pos, motivo: `posição inválida neste veículo` });
+      continue;
+    }
+    const errVal = linha.erro === 'qtd_valores' || linha.erro === 'valores_invalidos'
+      ? 'Informe 3 ou 4 valores de sulco (ex.: 14,14,14)'
+      : validarValoresSulco(linha.valores);
+    if (errVal) {
+      erros.push({ posicao: pos, motivo: errVal });
+      continue;
+    }
+
+    const pneu = await db.prepare(`
+      SELECT p.*, v.placa, v.tipo as veiculo_tipo, v.layout_pneus, v.km_atual, v.hr_atual
+      FROM pneus p
+      JOIN veiculos v ON v.id = p.veiculo_id
+      WHERE p.veiculo_id = ? AND p.filial_id = ? AND p.ativo = 1
+        AND p.status_pneu = 'montado' AND UPPER(p.posicao) = ?
+    `).get(veiculoId, filialId, pos);
+    if (!pneu) {
+      erros.push({ posicao: pos, motivo: 'sem pneu montado' });
+      continue;
+    }
+    if (Number(pneu.filial_id) !== Number(filialId)) {
+      erros.push({ posicao: pos, motivo: 'pneu de outra unidade' });
+      continue;
+    }
+    assertPneuOperacional(pneu);
+
+    const pontos = pontosDeValores(linha.valores);
+    const menor = menorSulco(pontos);
+    const limites = limitesDoVeiculo(veiculo);
+    ok.push({
+      posicao: pos,
+      pneu_id: pneu.id,
+      numero_fogo: pneu.numero_fogo,
+      valores: linha.valores,
+      ...pontos,
+      menor,
+      status_sulco: classificarSulco(menor, limites),
+      km_atual: pneu.km_atual,
+      hr_atual: pneu.hr_atual,
+      vida_recap: pneu.vida_recap,
+      veiculo_tipo: pneu.veiculo_tipo,
+      layout_pneus: pneu.layout_pneus,
+    });
+  }
+
+  return { veiculo, ok, erros };
+}
+
+async function candidatosRodizio(db, veiculoId, pneuId) {
+  const rows = await db.prepare(`
+    SELECT p.id, p.posicao, p.numero_fogo,
+      (SELECT sulco_externo FROM medicoes WHERE pneu_id = p.id ORDER BY data_medicao DESC, id DESC LIMIT 1) as ult_sulco_ext,
+      (SELECT sulco_central FROM medicoes WHERE pneu_id = p.id ORDER BY data_medicao DESC, id DESC LIMIT 1) as ult_sulco_cent,
+      (SELECT sulco_interno FROM medicoes WHERE pneu_id = p.id ORDER BY data_medicao DESC, id DESC LIMIT 1) as ult_sulco_int,
+      (SELECT sulco_auxiliar FROM medicoes WHERE pneu_id = p.id ORDER BY data_medicao DESC, id DESC LIMIT 1) as ult_sulco_aux
+    FROM pneus p
+    WHERE p.veiculo_id = ? AND p.ativo = 1 AND p.status_pneu = 'montado' AND p.id != ?
+  `).all(veiculoId, pneuId);
+  return rows.map((c) => ({
+    ...c,
+    posicao_label: c.posicao,
+    sulco_externo: c.ult_sulco_ext,
+    sulco_central: c.ult_sulco_cent,
+    sulco_interno: c.ult_sulco_int,
+    sulco_auxiliar: c.ult_sulco_aux,
+  }));
+}
+
+async function registrarUmaMedicao(db, {
+  pneu, veiculo, pontos, filialId, data, km, hr, responsavel,
+}) {
+  const limites = limitesDoVeiculo(veiculo);
+  const menor = menorSulco(pontos);
+  const diag = diagnosticarPerfil(pontos, limites.diagnostico_tolerancia_mm, {
+    papel: pneu.posicao ? papelPosicao(pneu.posicao) : null,
+    posicao: pneu.posicao || null,
+    limites,
+  });
+  const candidatos = pneu.veiculo_id
+    ? await candidatosRodizio(db, pneu.veiculo_id, pneu.id)
+    : [];
+  const acao = sugerirAcao(menor, limites, pneu.vida_recap || 0, {
+    pontos,
+    candidatos,
+    posicaoAtual: pneu.posicao || null,
+  });
+  const statusSulco = classificarSulco(menor, limites);
+
+  const anterior = await db.prepare(`
+    SELECT * FROM medicoes WHERE pneu_id = ?
+    ORDER BY data_medicao DESC, id DESC LIMIT 1
+  `).get(pneu.id);
+
+  let desgaste = null;
+  if (anterior && km != null) {
+    desgaste = desgastePorKm(menorSulco(anterior), menor, anterior.km_veiculo, km);
+  }
+
+  if (pneu.sulco_inicial_mm == null && menor != null) {
+    await db.prepare('UPDATE pneus SET sulco_inicial_mm = ? WHERE id = ?').run(menor, pneu.id);
+  }
+
+  if (statusSulco === 'alerta') {
+    await db.prepare(`
+      UPDATE pneus SET data_alerta_monitorar = COALESCE(data_alerta_monitorar, ?)
+      WHERE id = ?
+    `).run(data, pneu.id);
+  } else if (statusSulco === 'ok' || statusSulco === 'critico') {
+    await db.prepare(`UPDATE pneus SET data_alerta_monitorar = NULL WHERE id = ?`).run(pneu.id);
+  }
+
+  const mesmoNumero = (a, b) => {
+    if (a == null && b == null) return true;
+    if (a == null || b == null) return false;
+    return Number(a) === Number(b);
+  };
+  const reaproveitar = Boolean(
+    anterior
+    && String(anterior.data_medicao) === String(data)
+    && mesmoNumero(anterior.sulco_externo, pontos.sulco_externo)
+    && mesmoNumero(anterior.sulco_central, pontos.sulco_central)
+    && mesmoNumero(anterior.sulco_interno, pontos.sulco_interno)
+    && mesmoNumero(anterior.sulco_auxiliar, pontos.sulco_auxiliar)
+  );
+
+  let medicaoId;
+  if (reaproveitar) {
+    await db.prepare(`
+      UPDATE medicoes SET
+        km_veiculo = ?, hr_veiculo = ?, responsavel = ?,
+        diagnostico = ?, acao_sugerida = ?, desgaste_mm_km = ?, veiculo_placa = ?
+      WHERE id = ?
+    `).run(
+      km ?? null, hr ?? null, responsavel,
+      diag.codigo, acao.codigo, desgaste, veiculo.placa, anterior.id
+    );
+    medicaoId = anterior.id;
+  } else {
+    const result = await db.prepare(`
+      INSERT INTO medicoes (
+        pneu_id, data_medicao, km_veiculo, hr_veiculo,
+        sulco_externo, sulco_central, sulco_interno, sulco_auxiliar,
+        responsavel, diagnostico, acao_sugerida, desgaste_mm_km, veiculo_placa
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      pneu.id, data, km ?? null, hr ?? null,
+      pontos.sulco_externo, pontos.sulco_central, pontos.sulco_interno, pontos.sulco_auxiliar,
+      responsavel, diag.codigo, acao.codigo, desgaste, veiculo.placa
+    );
+    medicaoId = result.lastInsertRowid;
+  }
+
+  return {
+    medicaoId,
+    reaproveitar,
+    menor,
+    statusSulco,
+    diag,
+    acao,
+    pneu,
+  };
+}
+
+export async function registrarMedicoesWhatsApp({
+  filialId, veiculoId, itens, responsavel,
+}) {
+  const db = getDb();
+  const veiculo = await db.prepare(`
+    SELECT * FROM veiculos WHERE id = ? AND filial_id = ? AND ativo = 1
+  `).get(veiculoId, filialId);
+  if (!veiculo) throw erroOps('Veículo não encontrado nesta unidade', 404);
+  assertVeiculoOperacional(veiculo);
+  if (!itens?.length) throw erroOps('Nenhuma medição para salvar', 400);
+
+  const data = hojeIso();
+  const agora = new Date();
+  const hora = `${String(agora.getHours()).padStart(2, '0')}:${String(agora.getMinutes()).padStart(2, '0')}`;
+  const resp = String(responsavel || `WhatsApp ${hora}`).trim();
+  const gravados = [];
+
+  await db.transaction(async () => {
+    falharTxSeTeste();
+    for (const item of itens) {
+      const pneu = await db.prepare(`
+        SELECT * FROM pneus WHERE id = ? AND filial_id = ? AND ativo = 1
+      `).get(item.pneu_id, filialId);
+      if (!pneu || pneu.status_pneu !== 'montado' || Number(pneu.veiculo_id) !== Number(veiculoId)) {
+        throw erroOps(`Pneu da posição ${item.posicao} não está montado neste veículo`, 400);
+      }
+      const pontos = {
+        sulco_externo: item.sulco_externo ?? null,
+        sulco_central: item.sulco_central ?? null,
+        sulco_interno: item.sulco_interno ?? null,
+        sulco_auxiliar: item.sulco_auxiliar ?? null,
+      };
+      const r = await registrarUmaMedicao(db, {
+        pneu,
+        veiculo,
+        pontos,
+        filialId,
+        data,
+        km: veiculo.km_atual,
+        hr: veiculo.hr_atual,
+        responsavel: resp,
+      });
+      gravados.push({
+        posicao: item.posicao,
+        pneu_id: pneu.id,
+        medicao_id: r.medicaoId,
+        menor: r.menor,
+        status_sulco: r.statusSulco,
+        diagnostico: r.diag.codigo,
+        acao: r.acao.codigo,
+        reaproveitar: r.reaproveitar,
+        pneu,
+        diag: r.diag,
+        acaoObj: r.acao,
+      });
+    }
+  });
+
+  for (const g of gravados) {
+    if (g.reaproveitar) continue;
+    try {
+      await notificarGerentesAposMedicao({
+        statusSulco: g.status_sulco,
+        diagnosticoLabel: g.diag.label,
+        acaoLabel: g.acaoObj.label,
+        menorSulco: g.menor,
+        veiculo,
+        pneu: g.pneu,
+        medicaoId: g.medicao_id,
+      });
+    } catch (err) {
+      console.error('[medicao-wa] alerta:', err.message);
+    }
+  }
+
+  return {
+    placa: veiculo.placa,
+    data,
+    hora,
+    responsavel: resp,
+    total: gravados.length,
+    itens: gravados,
+  };
+}
+
+export function textoResumoMedicaoWa(placa, itens) {
+  const labelStatus = { ok: 'OK', alerta: 'Monitorar', critico: 'Crítico', sem_dado: 'Sem dado' };
+  const linhas = [
+    `📏 *Resumo — ${placa}*`,
+    '',
+    ...itens.map((i) => {
+      const vals = formatarValoresSulco(i.valores);
+      const st = labelStatus[i.status_sulco] || i.status_sulco;
+      const fogo = i.numero_fogo ? ` (fogo ${i.numero_fogo})` : '';
+      return `• *${i.posicao}*${fogo}: ${vals} mm — ${st}`;
+    }),
+    '',
+    '*1* confirma e salva · *0* cancela',
+  ];
+  return linhas.join('\n');
 }
 
 export { labelPosicao, TIPOS_PNEU, CONDICOES_PNEU };

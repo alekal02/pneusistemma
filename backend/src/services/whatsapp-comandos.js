@@ -2,6 +2,9 @@
  * Comandos naturais do WhatsApp (sem menu).
  * Não grava nada — só interpreta o texto.
  */
+import { POSICOES_PNEU } from '../pneus-layouts.js';
+
+const POSICOES_CONHECIDAS = new Set(Object.keys(POSICOES_PNEU).map((p) => p.toUpperCase()));
 function norm(texto) {
   return String(texto || '')
     .toLowerCase()
@@ -131,4 +134,87 @@ export function parseComandoNatural(texto) {
 
 export function pareceComandoNatural(texto) {
   return parseComandoNatural(texto) != null;
+}
+
+function parseValoresSulco(bruto) {
+  const raw = String(bruto || '').trim();
+  if (!raw) return [];
+  const partes = /;/.test(raw)
+    ? raw.split(';')
+    : /,/.test(raw)
+      ? raw.split(',')
+      : raw.split(/\s+/);
+  return partes
+    .map((p) => String(p).trim().replace(',', '.'))
+    .filter(Boolean)
+    .map((p) => Number(p));
+}
+
+/**
+ * @returns {{ posicao: string, valores: number[]|null, erro?: string } | null}
+ */
+export function parseLinhaMedicao(linha) {
+  const t = String(linha || '').trim();
+  if (!t) return null;
+  const m = t.match(/^([A-Za-z0-9]{1,8})\s*[:\-.]?\s+(.+)$/);
+  if (!m) return null;
+  const posicao = m[1].toUpperCase();
+  if (/^[A-Z]{3}[0-9][A-Z0-9][0-9]{2}$/.test(posicao)) return null;
+  const parecePos = POSICOES_CONHECIDAS.has(posicao)
+    || /^[0-9][A-Z]{1,3}$/.test(posicao)
+    || /^E[0-9][A-Z]{1,2}$/.test(posicao);
+  if (!parecePos) return null;
+  const valores = parseValoresSulco(m[2]);
+  if (!POSICOES_CONHECIDAS.has(posicao)) {
+    return { posicao, valores, erro: 'posicao_desconhecida' };
+  }
+  if (!valores.length || valores.some((v) => !Number.isFinite(v))) {
+    return { posicao, valores: null, erro: 'valores_invalidos' };
+  }
+  if (valores.length !== 3 && valores.length !== 4) {
+    return { posicao, valores, erro: 'qtd_valores' };
+  }
+  return { posicao, valores };
+}
+
+function parecePlacaLinha(texto) {
+  const p = String(texto || '')
+    .normalize('NFKC')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+  if (p.length < 3 || p.length > 10) return false;
+  if (!/[A-Z]/.test(p) || !/[0-9]/.test(p)) return false;
+  if (/^[0-9]+$/.test(p)) return false;
+  return true;
+}
+
+/**
+ * Placa + linhas `1E 14,14,14` (3 ou 4 valores).
+ * @returns {{ tipo: 'medir', placa: string|null, linhas: object[] } | null}
+ */
+export function parseMedicaoWhatsApp(texto) {
+  const lines = String(texto || '')
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (!lines.length) return null;
+
+  let placa = null;
+  const linhas = [];
+  for (const line of lines) {
+    const med = parseLinhaMedicao(line);
+    if (med) {
+      linhas.push(med);
+      continue;
+    }
+    if (!placa && parecePlacaLinha(line)) {
+      placa = String(line).replace(/[^A-Za-z0-9-]/g, '').toUpperCase();
+    }
+  }
+  if (!linhas.length) return null;
+  return { tipo: 'medir', placa, linhas };
+}
+
+export function pareceMedicaoWhatsApp(texto) {
+  return parseMedicaoWhatsApp(texto) != null;
 }
