@@ -820,8 +820,9 @@ async function passoMontarPos(ctx, sessao, texto) {
 
 const MARCA_OPCAO = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣'];
 
-/** Grupo antigo do menu. Não inclui código nem rótulo do catálogo. */
+/** Mesmos atalhos de filtroGrupoCaminhao. Não inclui código nem rótulo do catálogo. */
 const GRUPOS_RELATORIO_ANTIGOS = new Set([
+  'caminhao',
   'caminhoes',
   'compactadores',
   'caminhao/compactador',
@@ -829,11 +830,21 @@ const GRUPOS_RELATORIO_ANTIGOS = new Set([
   'caminhao_compactador',
 ]);
 
+const OPCOES_RELATORIO_FIXAS = [
+  { id: 'todos', label: 'Todos' },
+  { id: 'caminhao_compactador', label: 'Caminhão/Compactador' },
+  { id: 'trator', label: 'Trator' },
+  { id: 'mini_carregadeira', label: 'Mini carregadeira' },
+  { id: 'giro_zero', label: 'Giro zero' },
+];
+
+const IDS_RELATORIO_FIXOS = new Set(OPCOES_RELATORIO_FIXAS.map((o) => o.id));
+
 export function opcoesMenuRelatorio() {
-  return [
-    { id: 'todos', label: 'Todos' },
-    ...listarTiposEquipamento().map((t) => ({ id: t.codigo, label: t.label })),
-  ];
+  const extras = listarTiposEquipamento()
+    .filter((t) => !IDS_RELATORIO_FIXOS.has(t.codigo))
+    .map((t) => ({ id: t.codigo, label: t.label }));
+  return [...OPCOES_RELATORIO_FIXAS, ...extras];
 }
 
 export function textoTiposRelatorio() {
@@ -848,6 +859,7 @@ export function textoTiposRelatorio() {
     'Qual tipo de equipamento?',
     ...linhas,
     '',
+    '_2 = grupo: caminhao, caminhoes e caminhao/compactador._',
     '_0️⃣ cancela_',
   ].join('\n');
 }
@@ -872,7 +884,6 @@ export function tipoRelatorioDaResposta(texto) {
   if (GRUPOS_RELATORIO_ANTIGOS.has(c)) return 'caminhao_compactador';
   const cat = resolverTipoEquipamento(texto);
   if (cat) return cat.codigo;
-  if (c === 'caminhao') return 'truck_tracao';
   if (c === 'mini' || c === 'skid' || c === 'bobcat') return 'mini_carregadeira';
   if (c === 'giro') return 'giro_zero';
   return null;
