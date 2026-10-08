@@ -8,6 +8,7 @@ import { getDb } from '../database.js';
 import { config } from '../config.js';
 import { enviarERegistrar, limparTelefone, normalizarDestino } from '../services/whatsapp.js';
 import { processarMensagemMenu, pareceFogoAvulso } from '../services/whatsapp-menu.js';
+import { pareceComandoNatural } from '../services/whatsapp-comandos.js';
 
 const router = Router();
 
@@ -171,6 +172,7 @@ function deveIgnorarMensagemPropria(event) {
   if (placa.length >= 3 && placa.length <= 12 && /[A-Z]/.test(placa) && /[0-9]/.test(placa)) return false;
   // Nº de fogo real (0501-0042, AP1-0134) — não “fechou/rlx/flws”
   if (pareceFogoAvulso(text)) return false;
+  if (pareceComandoNatural(text)) return false;
   return true;
 }
 

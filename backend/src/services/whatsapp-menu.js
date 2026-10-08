@@ -18,6 +18,7 @@ import {
   enviarERegistrar,
   enviarDocumentoERegistrar,
 } from './whatsapp.js';
+import { parseComandoNatural } from './whatsapp-comandos.js';
 
 export function textoMenu() {
   return [
@@ -791,6 +792,346 @@ async function passoDescarte(ctx, sessao, texto) {
   await reply(ctx, 'Motivo do descarte? (ou `-` para pular)');
 }
 
+function resumoOnde(p) {
+  if (p.status_pneu === 'montado') return `montado em *${p.placa || '?'}* (${p.posicao || '?'})`;
+  if (p.status_pneu === 'recapagem') return 'em recapagem';
+  if (p.status_pneu === 'descarte') return 'no descarte';
+  return 'no estoque';
+}
+
+function tituloAcaoNatural(tipo, pneu) {
+  if (tipo === 'descarte') return `🗑️ Descarte de *${pneu.numero_fogo}*`;
+  if (tipo === 'recap') return `♻️ Recap de *${pneu.numero_fogo}*`;
+  if (tipo === 'estoque') return `📦 *${pneu.numero_fogo}* → estoque`;
+  return `🔄 Troca de *${pneu.numero_fogo}*`;
+}
+
+function textoConfirmaNatural(tipo, d) {
+  const sub = d.substituto_fogo
+    ? ` e montar *${d.substituto_fogo}* em *${d.placa}* / *${d.posicao}*`
+    : '';
+  if (tipo === 'descarte') return `Descartar *${d.fogo}*${sub}?\n*1* Sim · *0* Não`;
+  if (tipo === 'recap') return `Enviar *${d.fogo}* à recap${sub}?\n*1* Sim · *0* Não`;
+  if (tipo === 'estoque' || tipo === 'troca') {
+    return `Enviar *${d.fogo}* ao estoque e montar *${d.substituto_fogo}* em *${d.placa}* / *${d.posicao}*?\n*1* Sim · *0* Não`;
+  }
+  return `Confirmar?\n*1* Sim · *0* Não`;
+}
+
+async function executarComandoNatural(ctx, d) {
+  const filialId = ctx.filialId;
+  if (d.tipo === 'recap') {
+    const r = await ops.registrarRecap({
+      filialId,
+      pneuId: d.pneu_id,
+      pneuEstoqueId: d.substituto_id || null,
+    });
+    const extra = r.substituto ? ` *${r.substituto.fogo}* em ${r.substituto.placa} (${r.substituto.posicao}).` : '';
+    return `✅ *${r.fogo}* em recapagem (${r.vida}ª vida).${extra}`;
+  }
+  if (d.tipo === 'descarte') {
+    const r = await ops.registrarDescarte({
+      filialId,
+      pneuId: d.pneu_id,
+      pneuEstoqueId: d.substituto_id || null,
+    });
+    const extra = r.substituto ? ` *${r.substituto.fogo}* em ${r.substituto.placa} (${r.substituto.posicao}).` : '';
+    return `✅ *${r.fogo}* no descarte.${extra}`;
+  }
+  if (d.tipo === 'estoque' || d.tipo === 'troca') {
+    const r = await ops.trocarPorEstoque({
+      filialId,
+      pneuMontadoId: d.pneu_id,
+      pneuEstoqueId: d.substituto_id,
+    });
+    return `✅ ${r.mensagem}`;
+  }
+  throw new Error('Ação inválida');
+}
+
+async function iniciarAcaoNatural(ctx, tipo, pneu, extra = {}) {
+  if (tipo === 'onde') {
+    await clear(ctx);
+    await reply(ctx, `🛞 *${pneu.numero_fogo}* — ${resumoOnde(pneu)}`);
+    return;
+  }
+  if (tipo === 'recap' && pneu.status_pneu === 'recapagem') {
+    await setFluxo(ctx, 'cmd_natural', 'devolver', {
+      tipo, pneu_id: pneu.id, fogo: pneu.numero_fogo,
+    });
+    await reply(ctx, `♻️ *${pneu.numero_fogo}* já está em recapagem.\n*1* devolver ao estoque · *0* cancelar`);
+    return;
+  }
+  if (tipo === 'estoque' && pneu.status_pneu === 'estoque') {
+    await clear(ctx);
+    await reply(ctx, `*${pneu.numero_fogo}* já está no estoque.`);
+    return;
+  }
+
+  const montado = pneu.status_pneu === 'montado' && pneu.veiculo_id && pneu.posicao;
+  if ((tipo === 'estoque' || tipo === 'troca' || tipo === 'recap' || tipo === 'descarte') && montado) {
+    if (extra.substituto) {
+      try {
+        await ops.validarSubstitutoEstoque({
+          filialId: ctx.filialId,
+          pneuEstoqueId: extra.substituto.id,
+          veiculoId: pneu.veiculo_id,
+          posicao: pneu.posicao,
+        });
+      } catch (err) {
+        await reply(ctx, `❌ ${err.message}\nEnvie outro fogo ou *0*.`);
+        await setFluxo(ctx, 'cmd_natural', 'substituto', {
+          tipo,
+          pneu_id: pneu.id,
+          fogo: pneu.numero_fogo,
+          veiculo_id: pneu.veiculo_id,
+          posicao: pneu.posicao,
+          placa: pneu.placa,
+        });
+        return;
+      }
+      const dados = {
+        tipo,
+        pneu_id: pneu.id,
+        fogo: pneu.numero_fogo,
+        veiculo_id: pneu.veiculo_id,
+        posicao: pneu.posicao,
+        placa: pneu.placa,
+        substituto_id: extra.substituto.id,
+        substituto_fogo: extra.substituto.numero_fogo,
+      };
+      await setFluxo(ctx, 'cmd_natural', 'confirma', dados);
+      await reply(ctx, textoConfirmaNatural(tipo, dados));
+      return;
+    }
+    await pedirSubstitutoObrigatorio(ctx, {
+      fluxo: 'cmd_natural',
+      passo: 'substituto',
+      dados: {
+        tipo,
+        pneu_id: pneu.id,
+        fogo: pneu.numero_fogo,
+        veiculo_id: pneu.veiculo_id,
+        posicao: pneu.posicao,
+        placa: pneu.placa,
+      },
+      titulo: tituloAcaoNatural(tipo, pneu),
+      placa: pneu.placa,
+      posicao: pneu.posicao,
+    });
+    return;
+  }
+
+  if (tipo === 'troca' || tipo === 'estoque') {
+    await clear(ctx);
+    await reply(ctx, `*${pneu.numero_fogo}* não está montado (${pneu.status_pneu}).`);
+    return;
+  }
+
+  const dados = { tipo, pneu_id: pneu.id, fogo: pneu.numero_fogo };
+  await setFluxo(ctx, 'cmd_natural', 'confirma', dados);
+  await reply(ctx, textoConfirmaNatural(tipo, dados));
+}
+
+async function pedirEscolhaPneus(ctx, dados, lista) {
+  await setFluxo(ctx, 'cmd_natural', 'escolher', {
+    ...dados,
+    candidatos: lista.slice(0, 8).map((p) => ({
+      id: p.id,
+      fogo: p.numero_fogo,
+      status_pneu: p.status_pneu,
+      placa: p.placa,
+      posicao: p.posicao,
+      veiculo_id: p.veiculo_id,
+    })),
+  });
+  const linhas = lista.slice(0, 8).map((p, i) => `*${i + 1}* ${p.numero_fogo} — ${resumoOnde(p)}`);
+  await reply(ctx, `Vários pneus. Qual?\n${linhas.join('\n')}\n\nNúmero ou fogo. *0* cancela.`);
+}
+
+async function resolverEIniciarComando(ctx, tipo, fogo, fogo2) {
+  const lista = await ops.buscarPneusPorFogo(ctx.filialId, fogo);
+  if (!lista.length) {
+    await reply(ctx, `Pneu *${fogo}* não encontrado nesta unidade.`);
+    return;
+  }
+  if (lista.length > 1) {
+    await pedirEscolhaPneus(ctx, { tipo, fogo2: fogo2 || null }, lista);
+    return;
+  }
+  let sub = null;
+  if (fogo2) {
+    const subs = await ops.buscarPneusPorFogo(ctx.filialId, fogo2);
+    if (!subs.length) {
+      await reply(ctx, `Substituto *${fogo2}* não encontrado nesta unidade.`);
+      return;
+    }
+    if (subs.length > 1) {
+      await pedirEscolhaPneus(ctx, {
+        tipo,
+        pneu_alvo: {
+          id: lista[0].id,
+          numero_fogo: lista[0].numero_fogo,
+          status_pneu: lista[0].status_pneu,
+          placa: lista[0].placa,
+          posicao: lista[0].posicao,
+          veiculo_id: lista[0].veiculo_id,
+        },
+        escolher: 'substituto',
+      }, subs);
+      return;
+    }
+    sub = subs[0];
+  }
+  await iniciarAcaoNatural(ctx, tipo, lista[0], { substituto: sub });
+}
+
+async function passoComandoNatural(ctx, sessao, texto) {
+  const d = { ...(sessao.dados || {}) };
+
+  if (sessao.passo === 'escolher') {
+    const cands = d.candidatos || [];
+    const n = soNumero(texto);
+    let escolhido = null;
+    if (n && Number(n) >= 1 && Number(n) <= cands.length) {
+      escolhido = cands[Number(n) - 1];
+    } else {
+      const hits = await ops.buscarPneusPorFogo(ctx.filialId, String(texto).replace(/^fogo\s+/i, '').trim());
+      if (hits.length === 1) escolhido = hits[0];
+      else if (hits.length > 1) {
+        await pedirEscolhaPneus(ctx, d, hits);
+        return;
+      }
+    }
+    if (!escolhido) {
+      await reply(ctx, 'Não achei. Envie o número da lista, o fogo ou *0*.');
+      return;
+    }
+    const fogoEsc = escolhido.fogo || escolhido.numero_fogo;
+    const full = (fogoEsc && await ops.buscarPneuPorFogo(ctx.filialId, fogoEsc)) || escolhido;
+    const row = {
+      ...full,
+      numero_fogo: full.numero_fogo || fogoEsc,
+    };
+    if (d.escolher === 'substituto' && d.pneu_alvo) {
+      await iniciarAcaoNatural(ctx, d.tipo, d.pneu_alvo, { substituto: row });
+      return;
+    }
+    let sub = null;
+    if (d.fogo2) {
+      const subs = await ops.buscarPneusPorFogo(ctx.filialId, d.fogo2);
+      if (subs.length === 1) sub = subs[0];
+      else if (subs.length > 1) {
+        await pedirEscolhaPneus(ctx, {
+          tipo: d.tipo,
+          pneu_alvo: row,
+          escolher: 'substituto',
+        }, subs);
+        return;
+      }
+    }
+    await iniciarAcaoNatural(ctx, d.tipo, row, { substituto: sub });
+    return;
+  }
+
+  if (sessao.passo === 'substituto') {
+    if (await recusarFogoInvalido(ctx, texto)) return;
+    const busca = String(texto).replace(/^fogo\s+/i, '').trim();
+    const hits = await ops.buscarPneusPorFogo(ctx.filialId, busca);
+    if (hits.length > 1) {
+      await pedirEscolhaPneus(ctx, { ...d, escolher: 'substituto', pneu_alvo: {
+        id: d.pneu_id,
+        numero_fogo: d.fogo,
+        status_pneu: 'montado',
+        placa: d.placa,
+        posicao: d.posicao,
+        veiculo_id: d.veiculo_id,
+      } }, hits);
+      return;
+    }
+    const sub = hits[0];
+    if (!sub || sub.status_pneu !== 'estoque') {
+      await reply(ctx, 'Fogo não encontrado no *estoque*. Outro nº ou *0*.');
+      return;
+    }
+    try {
+      await ops.validarSubstitutoEstoque({
+        filialId: ctx.filialId,
+        pneuEstoqueId: sub.id,
+        veiculoId: d.veiculo_id,
+        posicao: d.posicao,
+      });
+      const dados = { ...d, substituto_id: sub.id, substituto_fogo: sub.numero_fogo };
+      await setFluxo(ctx, 'cmd_natural', 'confirma', dados);
+      await reply(ctx, textoConfirmaNatural(d.tipo, dados));
+    } catch (err) {
+      await reply(ctx, `❌ ${err.message}\nOutro nº ou *0*.`);
+    }
+    return;
+  }
+
+  if (sessao.passo === 'devolver') {
+    const sn = simNao(texto);
+    if (sn === false) {
+      await clear(ctx);
+      await reply(ctx, 'Ok.');
+      return;
+    }
+    if (sn !== true) {
+      await reply(ctx, '*1* devolver · *0* cancelar');
+      return;
+    }
+    try {
+      const r = await ops.devolverRecapAoEstoque({ filialId: ctx.filialId, pneuId: d.pneu_id });
+      await clear(ctx);
+      await reply(ctx, `✅ ${r.mensagem}`);
+    } catch (err) {
+      await clear(ctx);
+      await reply(ctx, `❌ ${err.message}`);
+    }
+    return;
+  }
+
+  if (sessao.passo === 'confirma') {
+    const sn = simNao(texto);
+    if (sn === false) {
+      await clear(ctx);
+      await reply(ctx, 'Cancelado. Nada foi alterado.');
+      return;
+    }
+    if (sn !== true) {
+      const talvezFogo = String(texto).replace(/^fogo\s+/i, '').trim();
+      const hits = await ops.buscarPneusPorFogo(ctx.filialId, talvezFogo);
+      if (hits.length === 1 && d.veiculo_id) {
+        try {
+          await ops.validarSubstitutoEstoque({
+            filialId: ctx.filialId,
+            pneuEstoqueId: hits[0].id,
+            veiculoId: d.veiculo_id,
+            posicao: d.posicao,
+          });
+          const dados = { ...d, substituto_id: hits[0].id, substituto_fogo: hits[0].numero_fogo };
+          await setFluxo(ctx, 'cmd_natural', 'confirma', dados);
+          await reply(ctx, textoConfirmaNatural(d.tipo, dados));
+          return;
+        } catch (err) {
+          await reply(ctx, `❌ ${err.message}\n*1* confirma · *0* cancela`);
+          return;
+        }
+      }
+      await reply(ctx, '*1* confirma · *0* cancela');
+      return;
+    }
+    try {
+      const msg = await executarComandoNatural(ctx, d);
+      await clear(ctx);
+      await reply(ctx, msg);
+    } catch (err) {
+      await reply(ctx, `❌ ${err.message}\n*1* tenta de novo · *0* cancela`);
+    }
+  }
+}
+
 async function atalhoFogo(ctx, texto) {
   const fogo = String(texto).replace(/^fogo\s+/i, '').trim();
   const pneu = await ops.buscarPneuPorFogo(ctx.filialId, fogo);
@@ -835,6 +1176,8 @@ async function continuarSessao(ctx, sessao, texto) {
         return await passoDescarte(ctx, sessao, texto);
       case 'montar_pos':
         return await passoMontarPos(ctx, sessao, texto);
+      case 'cmd_natural':
+        return await passoComandoNatural(ctx, sessao, texto);
       default:
         await clear(ctx);
         await reply(ctx, textoMenu());
@@ -901,6 +1244,17 @@ export async function processarMensagemMenu(ctx) {
   }
   if (/^(frota|placas|lista)\b/i.test(cmd)) {
     await enviarFrota(ctx);
+    return { handled: true };
+  }
+
+  const natural = parseComandoNatural(texto);
+  if (natural) {
+    try {
+      await resolverEIniciarComando(ctx, natural.tipo, natural.fogo, natural.fogo2);
+    } catch (err) {
+      console.error('[whatsapp-menu] comando natural', err);
+      await reply(ctx, `❌ ${err.message}`);
+    }
     return { handled: true };
   }
 

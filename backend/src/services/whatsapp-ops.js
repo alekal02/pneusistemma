@@ -243,6 +243,40 @@ export async function buscarPneuPorFogo(filialId, fogo) {
   `).get(filialId, n);
 }
 
+/**
+ * Match exato na filial; se não houver, parcial (hífen ignorado). Não cruza filial.
+ */
+export async function buscarPneusPorFogo(filialId, fogo, { limite = 8 } = {}) {
+  const db = getDb();
+  const n = String(fogo || '').trim();
+  if (!n) return [];
+  const exatos = await db.prepare(`
+    SELECT p.*, v.placa
+    FROM pneus p
+    LEFT JOIN veiculos v ON v.id = p.veiculo_id
+    WHERE p.filial_id = ? AND p.ativo = 1
+      AND LOWER(TRIM(p.numero_fogo)) = LOWER(?)
+    ORDER BY p.numero_fogo
+    LIMIT ?
+  `).all(filialId, n, limite);
+  if (exatos.length) return exatos;
+
+  const compacto = n.replace(/[-\s]/g, '').toLowerCase();
+  if (compacto.length < 3) return [];
+  return db.prepare(`
+    SELECT p.*, v.placa
+    FROM pneus p
+    LEFT JOIN veiculos v ON v.id = p.veiculo_id
+    WHERE p.filial_id = ? AND p.ativo = 1
+      AND (
+        LOWER(p.numero_fogo) LIKE '%' || LOWER(?) || '%'
+        OR REPLACE(REPLACE(LOWER(p.numero_fogo), '-', ''), ' ', '') LIKE '%' || ? || '%'
+      )
+    ORDER BY p.numero_fogo
+    LIMIT ?
+  `).all(filialId, n, compacto, limite + 1);
+}
+
 export async function listarPneusMontados(veiculoId) {
   const db = getDb();
   return db.prepare(`
