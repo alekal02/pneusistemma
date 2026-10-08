@@ -88,6 +88,7 @@ async function main() {
       sulco_critico_mm: limites.sulco_critico_mm,
       sulco_alerta_mm: limites.sulco_alerta_mm,
       fogo_preserva_digitos_legado: true,
+      commit: process.env.RENDER_GIT_COMMIT || null,
     });
   });
 

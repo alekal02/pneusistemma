@@ -17,7 +17,7 @@ Remotes locais: `origin` = monorepo; `frontend` = Vercel; `backend` = Render.
 Quando o usuário pedir para **subir / publicar / deploy**:
 
 1. Commit no monorepo (`origin`) se fizer sentido.
-2. **Obrigatório:** enviar as pastas para os repositórios de deploy com `powershell -File scripts/push-deploy.ps1` (ou o equivalente: clonar o split repo, copiar a pasta, commit, push em `main`).
+2. **Obrigatório:** enviar as pastas para os repositórios de deploy com `powershell -File scripts/push-deploy.ps1` (ou o equivalente: clonar o split repo, copiar a pasta, commit, push em `main`). O script publica o backend (Render), espera `GET /api/health` do commit novo e só então publica o frontend (Vercel). Sem backup do Neon confirmado (`-BackupNeon VERIFICADO`) e sem `FRONTEND_URL`, `CORS_ORIGIN` e `VITE_API_URL` conferidos, ele para. Não inverter a ordem e não usar `git push --force`.
 3. Não fazer `git push origin` esperando deploy na Vercel — isso não dispara o projeto vinculado.
 4. Diagnóstico de sulco/status roda no **backend (Render)**. Mudança só em `backend/` exige push em `pneusistemma-backend`.
 5. UI/cores/textos em `frontend/` exigem push em `pneusistemma-frontend`.
