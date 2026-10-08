@@ -5,11 +5,7 @@ export function parseCsv(text) {
   if (!raw) return { headers: [], rows: [] };
 
   const firstLine = raw.split(/\r?\n/).find((l) => l.trim() && !l.trim().startsWith('#')) || '';
-  const sep = firstLine.includes(';') && !firstLine.split(';')[0].includes(',')
-    ? ';'
-    : (firstLine.includes(';') && firstLine.indexOf(';') < (firstLine.indexOf(',') === -1 ? 999 : firstLine.indexOf(','))
-      ? ';'
-      : ',');
+  const sep = separadorCsv(firstLine);
 
   const lines = [];
   let current = '';
@@ -19,9 +15,10 @@ export function parseCsv(text) {
     const next = raw[i + 1];
     if (ch === '"') {
       if (inQuotes && next === '"') {
-        current += '"';
+        current += '""';
         i++;
       } else {
+        current += '"';
         inQuotes = !inQuotes;
       }
       continue;
@@ -81,6 +78,30 @@ export function parseCsv(text) {
   }).filter((r) => Object.keys(r).some((k) => k !== '__linha' && String(r[k] || '').trim()));
 
   return { headers, rows, separator: sep };
+}
+
+/** Separador fora de aspas. `;` citado não vira delimitador. */
+function separadorCsv(line) {
+  let quoted = false;
+  let semi = -1;
+  let comma = -1;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    const next = line[i + 1];
+    if (ch === '"') {
+      if (quoted && next === '"') {
+        i++;
+        continue;
+      }
+      quoted = !quoted;
+      continue;
+    }
+    if (quoted) continue;
+    if (ch === ';' && semi < 0) semi = i;
+    if (ch === ',' && comma < 0) comma = i;
+  }
+  if (semi >= 0 && (comma < 0 || semi < comma)) return ';';
+  return ',';
 }
 
 function normalizeHeader(h) {
@@ -385,6 +406,7 @@ export const FROTA_TEMPLATE_HEADERS = [
   'condicao',
   'vida_recap',
   'marca',
+  'modelo',
   'medida',
   'dot',
   'sulco_inicial_mm',
@@ -406,6 +428,7 @@ export const FROTA_TEMPLATE_ROWS = [
     condicao: 'novo',
     vida_recap: '0',
     marca: 'Michelin',
+    modelo: 'X Multi D',
     medida: '275/80R22.5',
     dot: '1224',
     sulco_inicial_mm: '16',
@@ -425,6 +448,7 @@ export const FROTA_TEMPLATE_ROWS = [
     condicao: 'novo',
     vida_recap: '0',
     marca: 'Michelin',
+    modelo: 'X Multi D',
     medida: '275/80R22.5',
     dot: '1224',
     sulco_inicial_mm: '15',
@@ -444,6 +468,7 @@ export const FROTA_TEMPLATE_ROWS = [
     condicao: 'recapado',
     vida_recap: '1',
     marca: 'Goodyear',
+    modelo: '',
     medida: '275/80R22.5',
     dot: '',
     sulco_inicial_mm: '14',
@@ -463,6 +488,7 @@ export const FROTA_TEMPLATE_ROWS = [
     condicao: 'novo',
     vida_recap: '0',
     marca: 'Pirelli',
+    modelo: 'FG01',
     medida: '275/80R22.5',
     dot: '0325',
     sulco_inicial_mm: '17',

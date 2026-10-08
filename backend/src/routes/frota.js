@@ -174,6 +174,7 @@ router.post('/import', async (req, res, next) => {
           ? parseFloat(String(raw.sulco_inicial_mm).replace(',', '.'))
           : null;
         const marca = String(raw.marca || '').trim() || null;
+        const modelo = String(raw.modelo || '').trim() || null;
         const medida = String(raw.medida || '').trim() || null;
         const dot = String(raw.dot || '').trim() || null;
         const obs = String(raw.observacoes || '').trim() || null;
@@ -233,7 +234,7 @@ router.post('/import', async (req, res, next) => {
                 posicao,
                 filialId,
                 marca,
-                null,
+                modelo,
                 medida,
                 dot,
                 fogo,
@@ -269,7 +270,7 @@ router.post('/import', async (req, res, next) => {
           const result = await comSavepoint(db, () => insertPneuEstoque.run(
             filialId,
             marca,
-            null,
+            modelo,
             medida,
             dot,
             fogo,

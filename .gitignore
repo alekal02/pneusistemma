@@ -17,3 +17,6 @@ backend/scripts/diag-*.mjs
 backend/scripts/sync-*.mjs
 backend/scripts/bench-*.mjs
 backend/scripts/test-*.mjs
+!backend/scripts/test-csv-utils.mjs
+!backend/scripts/test-equipamento-tipos.mjs
+!backend/scripts/test-whatsapp-relatorio-menu.mjs
