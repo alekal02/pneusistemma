@@ -2,11 +2,14 @@
  * Operações de frota usadas pelo menu WhatsApp (escopo por filial_id).
  */
 import { getDb } from '../database.js';
+import { registrarMovimentacao, travarPneu } from './pneu-movimentacao.js';
 import { ehViolacaoUnique } from '../db-utils.js';
 import { getLimites, classificarSulco, limitesDoVeiculo, menorSulco } from '../limites.js';
 import { diagnosticarPerfil, sugerirAcao, desgastePorKm } from '../diagnostico.js';
 import { notificarGerentesAposMedicao } from './alertas-whatsapp.js';
+import { avaliarAlertaPerfil, pesoAlerta, rotuloAlerta } from '../medicao-perfil.js';
 import { normalizarTipoVeiculo } from '../fix-encoding.js';
+import { camposTipoVeiculo } from '../equipamento-tipos.js';
 import { comRetryFogoUnico } from '../numero-fogo.js';
 import {
   LAYOUT_PADRAO,
@@ -16,8 +19,8 @@ import {
   labelPosicao,
   validarMontagem,
   aplicarLayoutPneus,
-  layoutPadraoPorTipo,
   papelPosicao,
+  layoutParaNovoVeiculo,
 } from '../pneus-layouts.js';
 
 function erroOps(mensagem, status) {
@@ -113,20 +116,6 @@ function hojeIso() {
   return new Date().toISOString().split('T')[0];
 }
 
-async function registrarMovimentacao(db, {
-  pneuId, veiculoId, tipo, data, km, hr, posicao, detalhes = null, placa = null,
-}) {
-  await db.prepare(`
-    INSERT INTO movimentacoes (
-      pneu_id, veiculo_id, tipo, data_evento, km_veiculo, hr_veiculo,
-      posicao, detalhes, veiculo_placa
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    pneuId, veiculoId, tipo, data,
-    km ?? null, hr ?? null, posicao ?? null, detalhes, placa
-  );
-}
-
 export async function buscarVeiculoPorPlaca(filialId, placaLimpa) {
   const db = getDb();
   const rows = await db.prepare(`
@@ -161,23 +150,37 @@ export async function listarFrota(filialId) {
   for (const v of rows || []) {
     const pneus = await db.prepare(`
       SELECT
-        m.sulco_externo, m.sulco_central, m.sulco_interno, m.sulco_auxiliar
+        m.sulco_externo, m.sulco_central, m.sulco_interno, m.sulco_auxiliar, m.sulco_mm,
+        m.inspecao_danos, m.hr_veiculo
       FROM pneus p
       LEFT JOIN medicoes m ON m.pneu_id = p.id
         AND m.id = (SELECT id FROM medicoes WHERE pneu_id = p.id ORDER BY data_medicao DESC, id DESC LIMIT 1)
       WHERE p.veiculo_id = ? AND p.ativo = 1 AND p.status_pneu = 'montado'
     `).all(v.id);
     let menor = null;
+    let pior = null;
+    let temMedicao = false;
     for (const p of pneus || []) {
       const m = menorSulco(p);
-      if (m != null) menor = menor == null ? m : Math.min(menor, m);
+      if (m != null) {
+        menor = menor == null ? m : Math.min(menor, m);
+        temMedicao = true;
+      }
+      if (p.inspecao_danos) temMedicao = true;
+      const aval = avaliarAlertaPerfil(p, {
+        tipo: v.tipo,
+        layout: v.layout_pneus,
+        hr_veiculo: p.hr_veiculo,
+      });
+      if (!pior || pesoAlerta(aval) < pesoAlerta(pior)) pior = aval;
     }
-    const status = classificarSulco(menor, limitesDoVeiculo(v));
     out.push({
       ...v,
       menor_sulco: menor,
-      status_sulco: status,
-      status_label: ({ ok: 'OK', alerta: 'Alerta', critico: 'Critico', sem_dado: 'Sem medicao' })[status] || status,
+      status_sulco: pior?.status_sulco ?? null,
+      status_label: rotuloAlerta(pior, temMedicao),
+      acao_sugerida: pior?.acao?.codigo || null,
+      acao_label: pior?.acao?.label || null,
     });
   }
   return out;
@@ -199,24 +202,28 @@ export async function buscarPlacaFilial(filialId, placaTexto) {
 }
 
 export async function criarVeiculo(filialId, {
-  placa, apelido = null, tipo = 'Truck / Tração', km_atual = 0, layout_pneus = null,
+  placa, apelido = null, tipo = 'Truck / Tração', km_atual = 0, hr_atual = 0, layout_pneus = null,
   marca = null, modelo = null, preCadastro = false,
 }) {
   const db = getDb();
-  const layoutId = preCadastro ? null : (layout_pneus || layoutPadraoPorTipo(tipo));
+  const tipoNorm = normalizarTipoVeiculo(tipo) || 'Truck / Tração';
+  const tipoCampos = camposTipoVeiculo(tipoNorm);
+  const layoutId = preCadastro ? null : layoutParaNovoVeiculo(tipoNorm, layout_pneus);
   try {
     const result = await db.prepare(`
       INSERT INTO veiculos (
-        placa, apelido, tipo, marca, modelo, km_atual, hr_atual, layout_pneus,
+        placa, apelido, tipo, tipo_codigo, marca, modelo, km_atual, hr_atual, layout_pneus,
         filial_id, ativo, cadastro_completo
-      ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, 1, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
     `).run(
       String(placa).trim().toUpperCase(),
       apelido?.trim() || null,
-      normalizarTipoVeiculo(tipo) || 'Truck / Tração',
+      tipoCampos.tipo,
+      tipoCampos.tipo_codigo,
       marca?.trim() || null,
       modelo?.trim() || null,
       Number(km_atual) || 0,
+      Number(hr_atual) || 0,
       layoutId,
       filialId,
       preCadastro ? 0 : 1
@@ -247,21 +254,24 @@ export async function completarVeiculo(filialId, veiculoId, {
   if (!veiculo) throw erroOps('Veículo não encontrado', 404);
   const modeloOk = String(modelo || '').trim();
   const marcaOk = String(marca || '').trim();
-  const layoutId = layout_pneus || layoutPadraoPorTipo(tipo || veiculo.tipo);
+  const tipoNorm = normalizarTipoVeiculo(tipo || veiculo.tipo) || veiculo.tipo;
+  const tipoCampos = camposTipoVeiculo(tipoNorm);
+  const layoutId = layoutParaNovoVeiculo(tipoNorm, layout_pneus || veiculo.layout_pneus);
   if (!modeloOk) throw erroOps('Modelo é obrigatório para concluir o cadastro', 400);
   if (!marcaOk) throw erroOps('Fabricante é obrigatório para concluir o cadastro', 400);
   if (!layoutId) throw erroOps('Configuração dos eixos é obrigatória', 400);
 
   await db.prepare(`
     UPDATE veiculos SET
-      marca = ?, modelo = ?, tipo = COALESCE(?, tipo),
+      marca = ?, modelo = ?, tipo = ?, tipo_codigo = ?,
       km_atual = COALESCE(?, km_atual), apelido = COALESCE(?, apelido),
       ano = COALESCE(?, ano), cadastro_completo = 1, updated_at = NOW()
     WHERE id = ?
   `).run(
     marcaOk,
     modeloOk,
-    tipo ? (normalizarTipoVeiculo(tipo) || tipo) : null,
+    tipoCampos.tipo,
+    tipoCampos.tipo_codigo,
     km_atual != null ? Number(km_atual) : null,
     apelido != null ? (String(apelido).trim() || null) : null,
     ano != null ? Number(ano) : null,
@@ -615,6 +625,14 @@ export async function registrarRecap({ filialId, pneuId, pneuEstoqueId = null })
   }
   let montagem = null;
   await db.transaction(async () => {
+    const locked = await travarPneu(db, pneuId);
+    if (!locked || locked.status_pneu === 'recapagem' || locked.status_pneu === 'descarte') {
+      throw Object.assign(new Error('Pneu já está em recapagem'), { status: 400 });
+    }
+    const vida = (locked.vida_recap || 0) + 1;
+    if (vida > (limites.max_recaps || 6)) {
+      throw Object.assign(new Error(`Limite de recaps atingido (${limites.max_recaps})`), { status: 400 });
+    }
     if (estavaMontado) {
       const veiculo = await db.prepare('SELECT * FROM veiculos WHERE id = ?').get(pneu.veiculo_id);
       await registrarMovimentacao(db, {
@@ -633,8 +651,8 @@ export async function registrarRecap({ filialId, pneuId, pneuEstoqueId = null })
       UPDATE pneus SET
         veiculo_id = NULL, posicao = NULL, status_pneu = 'recapagem',
         vida_recap = ?, condicao = 'recapado', data_instalacao = NULL
-      WHERE id = ?
-    `).run(novaVida, pneuId);
+      WHERE id = ? AND status_pneu IS DISTINCT FROM 'recapagem'
+    `).run(vida, pneuId);
     await registrarMovimentacao(db, {
       pneuId,
       veiculoId: estavaMontado ? veiculoId : null,
@@ -647,6 +665,7 @@ export async function registrarRecap({ filialId, pneuId, pneuEstoqueId = null })
         ? `WhatsApp · enviou à recap (${novaVida}ª vida) · origem ${placa || ''} ${posicao || ''}`.trim()
         : `WhatsApp · enviou à recap (${novaVida}ª vida) · origem estoque`,
       placa,
+      ciclo: locked.vida_recap || 0,
     });
     if (estavaMontado && substituto) {
       falharTxSeTeste();
@@ -660,7 +679,7 @@ export async function registrarRecap({ filialId, pneuId, pneuEstoqueId = null })
   });
   return {
     fogo: pneu.numero_fogo,
-    vida: novaVida,
+    vida: (pneu.vida_recap || 0) + 1,
     estava_montado: Boolean(estavaMontado),
     veiculo_id: veiculoId,
     posicao,
@@ -681,6 +700,10 @@ export async function devolverRecapAoEstoque({ filialId, pneuId }) {
   }
   const data = hojeIso();
   await db.transaction(async () => {
+    const locked = await travarPneu(db, pneuId);
+    if (!locked || locked.status_pneu !== 'recapagem') {
+      throw Object.assign(new Error('Pneu não está em recapagem'), { status: 400 });
+    }
     await db.prepare(`
       UPDATE pneus SET
         status_pneu = 'estoque',
@@ -688,7 +711,7 @@ export async function devolverRecapAoEstoque({ filialId, pneuId }) {
         veiculo_id = NULL,
         posicao = NULL,
         data_instalacao = NULL
-      WHERE id = ?
+      WHERE id = ? AND status_pneu = 'recapagem'
     `).run(pneuId);
     await registrarMovimentacao(db, {
       pneuId,
@@ -700,6 +723,7 @@ export async function devolverRecapAoEstoque({ filialId, pneuId }) {
       posicao: null,
       detalhes: `WhatsApp · recap concluído · voltou ao estoque (${pneu.vida_recap || 1}ª vida)`,
       placa: null,
+      ciclo: pneu.vida_recap || 0,
     });
   });
   return {
@@ -988,6 +1012,8 @@ export async function registrarDescarte({ filialId, pneuId, motivo = null, pneuE
       posicao: estavaMontado ? posicao : null,
       detalhes: motivo?.trim() || 'WhatsApp · enviou ao descarte',
       placa: pneu.placa || null,
+      ciclo: pneu.vida_recap || 0,
+      motivo: motivo?.trim() || null,
     });
     if (estavaMontado && substituto) {
       falharTxSeTeste();
