@@ -789,6 +789,36 @@ h3 {
   max-height: 92vh;
   overflow-y: auto;
 }
+.tipo-opcoes {
+  display: flex;
+  flex-direction: column;
+  gap: .5rem;
+  margin: 0 0 1rem;
+}
+.tipo-opcao {
+  width: 100%;
+  min-height: 3rem;
+  padding: .8rem .9rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.tipo-opcao.is-ativo {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+@media (min-width: 640px) {
+  .tipo-opcoes {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+}
 .v-layout-diagram {
   margin: .5rem 0 .75rem;
   background: var(--surface-2);
