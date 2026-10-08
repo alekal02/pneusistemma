@@ -185,6 +185,18 @@ async function main() {
   `).run(tokRow.id);
   log((await ar.validarTokenAcessoRapido(tokRow.token, ['cadastrar_veiculo'])) == null, 'Link expirado recusado');
 
+  const linkCad = ar.linkAcessoRapido('cadastrar_veiculo', 'tok');
+  log(
+    /^https:\/\/app\.pneusistemma\.test\/acesso-rapido\/veiculo\?token=/.test(linkCad)
+      && !ar.urlFrontendEhLocal(linkCad),
+    'Link de cadastro usa FRONTEND_URL pública'
+  );
+  log(/\/veiculo-acesso-rapido\?token=/.test(ar.linkAcessoRapido('medir', 'tok')), 'Link medir abre o formulário de medição');
+  log(/\/acesso-rapido\/pneu\?token=/.test(ar.linkAcessoRapido('cadastrar_pneu', 'tok')), 'Link de pneu abre o formulário de pneu');
+  log(/\/acesso-rapido\/troca\?token=/.test(ar.linkAcessoRapido('troca', 'tok')), 'Link de troca abre o formulário de troca');
+  log(ar.urlFrontendEhLocal('http://localhost:5173') && !ar.urlFrontendEhLocal('https://pneusistemma-frontend.vercel.app'),
+    'Localhost é recusado como URL pública');
+
   const { token: tokNovo } = await ar.gerarTokenAcessoRapido({
     tipo: 'cadastrar_veiculo',
     veiculoId: veiculo.id,
@@ -243,6 +255,9 @@ async function main() {
   const login = await http('POST', '/auth/login', { body: { login: 'matriz', senha: 'matriz123' } });
   const jwtTok = login.dados?.token;
   log(login.status === 200 && !!jwtTok, 'HTTP login matriz');
+
+  const medirComCad = await http('GET', `/veiculos/acesso-rapido?token=${encodeURIComponent(tokNovo)}`);
+  log(medirComCad.status === 401, 'Token de cadastro não abre o formulário de medição');
 
   const getAr = await http('GET', `/acesso-rapido?token=${encodeURIComponent(tokNovo)}`);
   log(
@@ -309,6 +324,39 @@ async function main() {
     dashOk.dados?.veiculos_ativos === 1
       && vDashOk?.cadastro_pendente === false,
     'Dashboard: após concluir entra nos indicadores operacionais'
+  );
+
+  const pendCard = await ops.criarVeiculo(filialId, {
+    placa: 'CARD1A1', tipo: 'Truck / Tração', preCadastro: true,
+  });
+  const semModelo = await http('POST', `/veiculos/${pendCard.id}/concluir`, {
+    token: jwtTok,
+    body: { marca: 'Volkswagen', layout_pneus: 'truck_10' },
+  });
+  log(semModelo.status === 400, 'Card: conclusão sem modelo recusada');
+  const adminLogin = await http('POST', '/auth/login', { body: { login: 'admin', senha: 'admin123' } });
+  const adminPost = await http('POST', `/veiculos/${pendCard.id}/concluir`, {
+    token: adminLogin.dados?.token,
+    body: { marca: 'Volkswagen', modelo: 'Delivery', layout_pneus: 'truck_10' },
+  });
+  log(adminLogin.status === 200 && adminPost.status === 403, 'Card: quem não é operador da unidade não conclui');
+  const outraV = await ops.criarVeiculo(outra.id, { placa: 'OUT1B2', preCadastro: true });
+  const fora = await http('POST', `/veiculos/${outraV.id}/concluir`, {
+    token: jwtTok,
+    body: { marca: 'Volkswagen', modelo: 'Delivery', layout_pneus: 'truck_10' },
+  });
+  log(fora.status === 404, 'Card: operador de outra filial não conclui');
+  const okCard = await http('POST', `/veiculos/${pendCard.id}/concluir`, {
+    token: jwtTok,
+    body: {
+      marca: 'Volkswagen', modelo: 'Delivery', tipo: 'Truck / Tração',
+      layout_pneus: 'truck_10', km_atual: 10,
+    },
+  });
+  const cardDb = await db.prepare(`SELECT cadastro_completo, modelo FROM veiculos WHERE id = ?`).get(pendCard.id);
+  log(
+    okCard.status === 200 && Number(cardDb.cadastro_completo) === 1 && cardDb.modelo === 'Delivery',
+    'Card: operador autorizado conclui o cadastro'
   );
 
   await ops.montarPneu({ filialId, pneuId: pEst.id, veiculoId: veiculo.id, posicao: '1E' });

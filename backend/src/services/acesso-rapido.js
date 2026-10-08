@@ -29,9 +29,17 @@ const PATH_POR_TIPO = {
   troca: '/acesso-rapido/troca',
 };
 
+export function urlFrontendEhLocal(url) {
+  return /localhost|127\.0\.0\.1/i.test(String(url || ''));
+}
+
 export function linkAcessoRapido(tipo, token) {
+  const base = config.frontendUrl.replace(/\/$/, '');
+  if (config.nodeEnv === 'production' && urlFrontendEhLocal(base)) {
+    throw new Error('FRONTEND_URL aponta para localhost. Defina a URL pública do sistema.');
+  }
   const path = PATH_POR_TIPO[tipo] || PATH_POR_TIPO.medir;
-  return `${config.frontendUrl.replace(/\/$/, '')}${path}?token=${token}`;
+  return `${base}${path}?token=${token}`;
 }
 
 /**
@@ -58,7 +66,7 @@ export async function gerarTokenAcessoRapido({
   `).run(token, veiculoId || null, pneuId || null, filialId, tipoOk, whatsappOrigem);
 
   const link = linkAcessoRapido(tipoOk, token);
-  if (/localhost|127\.0\.0\.1/i.test(link)) {
+  if (urlFrontendEhLocal(link)) {
     console.warn(
       '[acesso-rapido] FRONTEND_URL aponta para localhost — o link não abre no celular. '
       + 'Defina o IP da rede em backend/.env (ex.: http://10.0.0.231:5173).'

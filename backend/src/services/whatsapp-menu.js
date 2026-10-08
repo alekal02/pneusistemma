@@ -1560,6 +1560,14 @@ async function atalhoFogo(ctx, texto) {
 
 async function continuarSessao(ctx, sessao, texto) {
   try {
+    if (
+      sessao.fluxo !== 'cmd_natural'
+      && sessao.fluxo !== 'pre_cadastro'
+      && parseComandoNatural(texto)
+    ) {
+      await reply(ctx, 'Você está no meio de uma operação. Envie o que foi pedido, *0* para cancelar ou *menu*.');
+      return;
+    }
     switch (sessao.fluxo) {
       case 'medir':
         return await fluxoMedirPlaca(ctx, texto);

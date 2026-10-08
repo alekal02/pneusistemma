@@ -35,7 +35,7 @@ import {
   listarEstoqueFilial,
 } from '../services/acesso-rapido.js';
 import { consultarProximoFogo, comRetryFogoUnico } from '../numero-fogo.js';
-import { montarPneu } from '../services/whatsapp-ops.js';
+import { montarPneu, completarVeiculo } from '../services/whatsapp-ops.js';
 import { excluirVeiculoCompleto } from '../services/limpar-filial.js';
 
 const router = Router();
@@ -548,6 +548,26 @@ router.get('/:id/link-whatsapp', async (req, res, next) => {
       expira_em_horas: 24,
     });
   } catch (err) {
+    next(err);
+  }
+});
+
+/** Operador da unidade conclui o pré-cadastro (marca, modelo e eixos). */
+router.post('/:id/concluir', async (req, res, next) => {
+  try {
+    const filialId = filialScopeId(req);
+    const { marca, modelo, tipo, km_atual, layout_pneus, apelido, ano } = req.body || {};
+    const created = await completarVeiculo(filialId, req.params.id, {
+      marca, modelo, tipo, km_atual, layout_pneus, apelido, ano,
+    });
+    res.json({
+      mensagem: `Cadastro de ${created.placa} concluído`,
+      veiculo_id: created.id,
+      total_posicoes: created.total_posicoes,
+      layout_pneus: created.layoutId,
+    });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ erro: err.message });
     next(err);
   }
 });

@@ -96,6 +96,10 @@ async function main() {
     res.status(500).json({ erro: err.message || 'Erro interno do servidor' });
   });
 
+  if (config.nodeEnv === 'production' && /localhost|127\.0\.0\.1/i.test(config.frontendUrl)) {
+    console.error('[config] FRONTEND_URL aponta para localhost. Os links do WhatsApp não abrem fora desta máquina.');
+  }
+
   app.listen(config.port, config.host, () => {
     console.log('========================================');
     console.log('  API - Controle de Pneus (PostgreSQL)');

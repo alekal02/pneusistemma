@@ -103,6 +103,11 @@ function isGestao() {
   return isAdmin() || isGerente();
 }
 
+/** Conclusão do pré-cadastro: só o operador da unidade (rota /veiculos/:id/concluir). */
+function podeConcluirCadastro() {
+  return currentUser?.papel === 'filial';
+}
+
 /** Diagnóstico e orientação de ação: só gerente/admin — filial só registra medição */
 function podeVerOrientacaoGestao() {
   return isGestao();
@@ -802,6 +807,7 @@ function renderCardCaminhaoFrota(v, { pendente = false, atrasado = false, eHoje 
   return `
     <article class="veiculo-card veiculo-item frota-truck-card${pendente ? ' veiculo-card-pendente' : ''}${atrasado ? ' veiculo-card-atrasado' : ''}"
              data-id="${v.id}"
+             data-cadastro-pendente="${cadastroPendente ? '1' : '0'}"
              data-status="${v.status_sulco || ''}"
              data-troca="${v.pendencias_troca || 0}"
              data-recap="${v.pendencias_recap || 0}"
@@ -819,6 +825,7 @@ function renderCardCaminhaoFrota(v, { pendente = false, atrasado = false, eHoje 
           ${statusSemana}
         </div>
         ${mostrarMedir && !cadastroPendente ? `<button type="button" class="btn btn-sm btn-primary btn-dash-medir" data-id="${v.id}">Medir</button>` : ''}
+        ${cadastroPendente && podeConcluirCadastro() ? `<button type="button" class="btn btn-sm btn-primary btn-concluir-cadastro" data-id="${v.id}">Concluir cadastro</button>` : ''}
       </div>
     </article>
   `;
@@ -952,8 +959,18 @@ async function loadDashboard() {
 
     lista.querySelectorAll('.veiculo-card').forEach((card) => {
       card.addEventListener('click', (e) => {
-        if (e.target.closest('.btn-dash-medir')) return;
+        if (e.target.closest('.btn-dash-medir, .btn-concluir-cadastro')) return;
+        if (card.dataset.cadastroPendente === '1') {
+          abrirConcluirCadastro(card.dataset.id, 'dashboard');
+          return;
+        }
         openVeiculoDetalhe(card.dataset.id, 'dashboard');
+      });
+    });
+    lista.querySelectorAll('.btn-concluir-cadastro').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        abrirConcluirCadastro(btn.dataset.id, 'dashboard');
       });
     });
     lista.querySelectorAll('.btn-dash-medir').forEach((btn) => {
@@ -1030,22 +1047,34 @@ async function loadVeiculos() {
     }
 
     lista.innerHTML = veiculos.map((v) => `
-      <div class="veiculo-card" data-id="${v.id}" ${attrsBuscaVeiculo(v)}>
+      <div class="veiculo-card" data-id="${v.id}" data-cadastro-pendente="${ehCadastroPendente(v) ? '1' : '0'}" ${attrsBuscaVeiculo(v)}>
         <div class="veiculo-info">
           <h4>${escapeHtml(v.apelido || v.placa)}</h4>
           <p>${escapeHtml(v.placa)} · ${escapeHtml(normalizarTipoLabel(v.tipo) || v.tipo || '')} · ${ehCadastroPendente(v) ? 'cadastro pendente' : `${v.total_pneus} pneus · ${v.km_atual?.toLocaleString('pt-BR') || 0} km`}</p>
         </div>
         <div class="veiculo-meta">
           ${badge(v.status_sulco)}
-          ${ehCadastroPendente(v) ? '' : `<button class="btn btn-sm btn-primary btn-medir" data-id="${v.id}">Medir</button>`}
+          ${ehCadastroPendente(v)
+            ? (podeConcluirCadastro() ? `<button type="button" class="btn btn-sm btn-primary btn-concluir-cadastro" data-id="${v.id}">Concluir cadastro</button>` : '')
+            : `<button class="btn btn-sm btn-primary btn-medir" data-id="${v.id}">Medir</button>`}
         </div>
       </div>
     `).join('');
 
     lista.querySelectorAll('.veiculo-card').forEach((card) => {
       card.addEventListener('click', (e) => {
-        if (e.target.classList.contains('btn-medir')) return;
+        if (e.target.closest('.btn-medir, .btn-concluir-cadastro')) return;
+        if (card.dataset.cadastroPendente === '1') {
+          abrirConcluirCadastro(card.dataset.id, 'veiculos');
+          return;
+        }
         openVeiculoDetalhe(card.dataset.id, 'veiculos');
+      });
+    });
+    lista.querySelectorAll('.btn-concluir-cadastro').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        abrirConcluirCadastro(btn.dataset.id, 'veiculos');
       });
     });
 
@@ -3497,10 +3526,83 @@ document.getElementById('file-import-pneus')?.addEventListener('change', async (
 // ── Modal Veículo ──────────────────────────────────────
 
 const modalVeiculo = document.getElementById('modal-veiculo');
+let concluirVeiculoId = null;
+let concluirOrigem = 'dashboard';
+
+function restaurarModalVeiculoNovo() {
+  concluirVeiculoId = null;
+  const form = document.getElementById('form-veiculo');
+  form?.reset();
+  const placa = document.getElementById('v-placa');
+  if (placa) placa.readOnly = false;
+  const marca = document.getElementById('v-marca');
+  const modelo = document.getElementById('v-modelo');
+  if (marca) marca.required = false;
+  if (modelo) modelo.required = false;
+  const titulo = document.getElementById('modal-veiculo-titulo');
+  if (titulo) titulo.textContent = 'Novo Veículo';
+  const hint = form?.querySelector(':scope > p.hint');
+  if (hint) hint.textContent = 'Informe a placa e a configuração dos eixos. Depois você coloca os pneus no diagrama.';
+  const submit = form?.querySelector('button[type="submit"]');
+  if (submit) submit.textContent = 'Salvar e abrir diagrama';
+  form?.querySelector('details.form-avancado')?.removeAttribute('open');
+}
+
+async function abrirConcluirCadastro(id, origem = 'dashboard') {
+  if (!podeConcluirCadastro()) {
+    toast('Só o operador da unidade conclui este cadastro', 'error');
+    return;
+  }
+  try {
+    await carregarMetaVeiculos();
+    const v = await fetchJSON(`${API}/veiculos/${id}`);
+    if (!ehCadastroPendente(v)) {
+      openVeiculoDetalhe(id, origem === 'filiais' ? 'filiais' : origem);
+      return;
+    }
+    restaurarModalVeiculoNovo();
+    concluirVeiculoId = v.id;
+    concluirOrigem = origem;
+    const titulo = document.getElementById('modal-veiculo-titulo');
+    if (titulo) titulo.textContent = 'Concluir cadastro';
+    const hint = document.querySelector('#form-veiculo > p.hint');
+    if (hint) hint.textContent = 'Informe fabricante, modelo e a configuração dos eixos para liberar o caminhão.';
+    const placa = document.getElementById('v-placa');
+    if (placa) {
+      placa.value = v.placa || '';
+      placa.readOnly = true;
+    }
+    const apelido = document.getElementById('v-apelido');
+    if (apelido) apelido.value = v.apelido || '';
+    const tipo = document.getElementById('v-tipo');
+    if (tipo && v.tipo) tipo.value = normalizarTipoLabel(v.tipo) || v.tipo;
+    preencherSelectLayouts('v-layout', v.layout_pneus || meta.layout_padrao, {
+      soTruckToco: true,
+      tipo: tipo?.value || 'Truck / Tração',
+    });
+    const marca = document.getElementById('v-marca');
+    const modelo = document.getElementById('v-modelo');
+    if (marca) {
+      marca.required = true;
+      marca.value = v.marca || '';
+    }
+    if (modelo) {
+      modelo.required = true;
+      modelo.value = (/^pendente$/i.test(v.modelo || '') ? '' : (v.modelo || ''));
+    }
+    const km = document.getElementById('v-km');
+    if (km) km.value = v.km_atual ?? 0;
+    document.querySelector('#form-veiculo details.form-avancado')?.setAttribute('open', '');
+    const submit = document.querySelector('#form-veiculo button[type="submit"]');
+    if (submit) submit.textContent = 'Concluir cadastro';
+    modalVeiculo.showModal();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
 
 document.getElementById('btn-novo-veiculo').addEventListener('click', () => {
-  document.getElementById('form-veiculo').reset();
-  document.getElementById('modal-veiculo-titulo').textContent = 'Novo Veículo';
+  restaurarModalVeiculoNovo();
   preencherSelectLayouts('v-layout', meta.layout_padrao, {
     soTruckToco: true,
     tipo: document.getElementById('v-tipo')?.value || 'Truck / Tração',
@@ -3536,10 +3638,41 @@ document.getElementById('layout-select')?.addEventListener('change', () => {
   if (layout) preencherCheckboxesPosicoes('layout-custom-checkboxes', layout.posicoes);
 });
 
-document.getElementById('btn-cancelar-veiculo').addEventListener('click', () => modalVeiculo.close());
+document.getElementById('btn-cancelar-veiculo').addEventListener('click', () => {
+  restaurarModalVeiculoNovo();
+  modalVeiculo.close();
+});
 
 document.getElementById('form-veiculo').addEventListener('submit', async (e) => {
   e.preventDefault();
+  if (concluirVeiculoId) {
+    const id = concluirVeiculoId;
+    const origem = concluirOrigem;
+    try {
+      const result = await fetchJSON(`${API}/veiculos/${id}/concluir`, {
+        method: 'POST',
+        body: JSON.stringify({
+          apelido: document.getElementById('v-apelido').value,
+          tipo: document.getElementById('v-tipo').value,
+          marca: document.getElementById('v-marca').value,
+          modelo: document.getElementById('v-modelo').value,
+          ano: parseInt(document.getElementById('v-ano').value, 10) || null,
+          km_atual: parseInt(document.getElementById('v-km').value, 10) || 0,
+          layout_pneus: document.getElementById('v-layout').value,
+        }),
+      });
+      modalVeiculo.close();
+      restaurarModalVeiculoNovo();
+      toast(result.mensagem || 'Cadastro concluído', 'success');
+      if (origem === 'veiculos') loadVeiculos();
+      else if (origem === 'filiais') loadDashboard();
+      else loadDashboard();
+      await openVeiculoDetalhe(id, origem === 'veiculos' ? 'veiculos' : 'dashboard');
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+    return;
+  }
   try {
     const result = await fetchJSON(`${API}/veiculos`, {
       method: 'POST',
@@ -4655,7 +4788,13 @@ async function abrirDetalheFilial(id) {
       btn.addEventListener('click', () => abrirVeiculoNaUnidade(id, btn.dataset.veiculoId));
     });
     el.querySelectorAll('.veiculo-item[data-id], .frota-truck-card[data-id]').forEach((row) => {
-      const open = () => abrirInspecaoVeiculoFilial(id, row.dataset.id);
+      const open = () => {
+        if (row.dataset.cadastroPendente === '1') {
+          abrirConcluirCadastro(row.dataset.id, 'filiais');
+          return;
+        }
+        abrirInspecaoVeiculoFilial(id, row.dataset.id);
+      };
       row.addEventListener('click', (e) => {
         if (e.target.closest('.btn-dash-medir')) return;
         open();

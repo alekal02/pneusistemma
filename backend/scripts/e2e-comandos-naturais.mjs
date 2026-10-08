@@ -186,6 +186,40 @@ async function main() {
     'Rollback: falha na gravação restaura original e substituto'
   );
 
+  const menuAberto = await falar('1');
+  log(menuAberto.sessao?.fluxo === 'medir' && menuAberto.sessao?.passo === 'placa', 'Menu 1 abre medição por placa');
+  const movMenu = await qtdMov(db, pA.id);
+  await processarMensagemMenu({
+    filialId, phone: menuAberto.phone, destino: menuAberto.phone, chatJid: '', texto: '10700002 descarte',
+  });
+  const sessaoMenu = await obterSessao(filialId, menuAberto.phone, '');
+  log(
+    sessaoMenu?.fluxo === 'medir'
+      && (await estadoPneu(db, pA.id)).status_pneu === 'estoque'
+      && (await qtdMov(db, pA.id)) === movMenu,
+    'Comando natural não interrompe o menu de medição'
+  );
+  await processarMensagemMenu({
+    filialId, phone: menuAberto.phone, destino: menuAberto.phone, chatJid: '', texto: '4',
+  });
+  const sessaoQuatro = await obterSessao(filialId, menuAberto.phone, '');
+  log(sessaoQuatro?.fluxo === 'medir', 'Opção 4 dentro da medição não abre o menu de troca');
+
+  const pConf = await pneuEstoque('MATRIZ-10700777');
+  const emConfirma = await falar(`trocar ${pAmb.numero_fogo} por ${pConf.numero_fogo}`);
+  log(emConfirma.sessao?.fluxo === 'cmd_natural' && emConfirma.sessao?.passo === 'confirma', 'Troca em confirmação antes do segundo comando');
+  await processarMensagemMenu({
+    filialId, phone: emConfirma.phone, destino: emConfirma.phone, chatJid: '', texto: '10700012 descarte',
+  });
+  const sessaoConf = await obterSessao(filialId, emConfirma.phone, '');
+  log(
+    sessaoConf?.fluxo === 'cmd_natural'
+      && sessaoConf?.passo === 'confirma'
+      && (await estadoPneu(db, pAmb.id)).status_pneu === 'montado'
+      && (await estadoPneu(db, pConf.id)).status_pneu === 'estoque',
+    'Durante a confirmação, outro comando natural não grava descarte'
+  );
+
   await closePool();
   try { await pglite.server?.stop?.(); } catch { /* ignore */ }
 
