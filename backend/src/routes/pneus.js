@@ -43,6 +43,8 @@ import {
   moverOuTrocarNaFrota,
   registrarRecap,
   registrarDescarte,
+  enviarAoEstoqueOuTrocar,
+  autorizarDesmontagemSimples,
 } from '../services/whatsapp-ops.js';
 import {
   consultarProximoFogo,
@@ -985,9 +987,13 @@ router.post('/:id/montar', async (req, res, next) => {
   }
 });
 
-/** Retira pneu → estoque */
+/**
+ * Retira pneu → estoque.
+ * Com montar_pneu_id: troca atômica (posição não fica vazia).
+ * Sem substituto: só com permitir_vazio (desmontagem simples autorizada).
+ */
 router.post('/:id/desmontar', async (req, res, next) => {
-  const { km_veiculo, hr_veiculo, data_evento, detalhes } = req.body || {};
+  const { km_veiculo, hr_veiculo, detalhes, montar_pneu_id, permitir_vazio } = req.body || {};
   try {
     const filialId = filialScopeId(req);
     const pneu = await assertPneuDaFilial(req.params.id, filialId);
@@ -998,43 +1004,37 @@ router.post('/:id/desmontar', async (req, res, next) => {
     }
 
     const db = getDb();
-    const data = data_evento || new Date().toISOString().split('T')[0];
     const veiculoId = pneu.veiculo_id;
-    const posicao = pneu.posicao;
     const veiculo = await db.prepare('SELECT * FROM veiculos WHERE id = ?').get(veiculoId);
     const km = km_veiculo != null ? parseInt(km_veiculo, 10) : (veiculo?.km_atual ?? null);
     const hr = hr_veiculo != null ? parseFloat(hr_veiculo) : (veiculo?.hr_atual ?? null);
 
-    await db.transaction(async () => {
-      await db.prepare(`
-        UPDATE pneus SET
-          veiculo_id = NULL,
-          posicao = NULL,
-          status_pneu = 'estoque',
-          data_instalacao = NULL
-        WHERE id = ?
-      `).run(pneu.id);
-
-      await registrarMovimentacao(db, {
-        pneuId: pneu.id,
-        veiculoId,
-        tipo: 'retirada',
-        data,
-        km,
-        hr,
-        posicao,
-        detalhes: detalhes?.trim() || `Retirou do caminhão ${veiculo?.placa || ''}`.trim(),
-        placa: veiculo?.placa || null,
-      });
-      if (veiculoId) await atualizarKmHrVeiculo(db, veiculoId, filialId, km, hr);
+    const result = await enviarAoEstoqueOuTrocar({
+      filialId,
+      pneuId: pneu.id,
+      pneuEstoqueId: montar_pneu_id,
+      permitirVazio: autorizarDesmontagemSimples(permitir_vazio),
+      detalhes: detalhes?.trim() || `Retirou do caminhão ${veiculo?.placa || ''}`.trim(),
+      km,
+      hr,
     });
+
+    if (result.modo === 'desmontagem_simples' && veiculoId) {
+      await atualizarKmHrVeiculo(db, veiculoId, filialId, km, hr);
+    }
+
+    if (result.modo === 'troca') {
+      return res.json(result);
+    }
 
     const atualizado = await db.prepare('SELECT * FROM pneus WHERE id = ?').get(pneu.id);
     res.json({
       mensagem: 'Pneu retirado e enviado ao estoque',
       pneu: enriquecerPneu(atualizado, await ultimaMedicaoDoPneu(db, pneu.id)),
+      modo: result.modo,
     });
   } catch (err) {
+    if (err.status) return res.status(err.status).json({ erro: err.message });
     next(err);
   }
 });

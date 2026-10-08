@@ -2669,7 +2669,10 @@ async function loadPneus() {
       btn.addEventListener('click', async () => {
         if (!confirm('Desmontar e enviar ao estoque?')) return;
         try {
-          await fetchJSON(`${API}/pneus/${btn.dataset.desmontarPneu}/desmontar`, { method: 'POST', body: '{}' });
+          await fetchJSON(`${API}/pneus/${btn.dataset.desmontarPneu}/desmontar`, {
+            method: 'POST',
+            body: JSON.stringify({ permitir_vazio: true, detalhes: 'Lista de pneus · desmontagem simples' }),
+          });
           toast('Pneu no estoque');
           loadPneus();
         } catch (err) {

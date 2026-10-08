@@ -330,7 +330,15 @@ export async function montarPneu({ filialId, pneuId, veiculoId, posicao }) {
   return { placa: veiculo.placa, posicao, label: labelPosicao(posicao), fogo: pneu.numero_fogo };
 }
 
-export async function desmontarPneu({ filialId, pneuId }) {
+export function autorizarDesmontagemSimples(valor) {
+  if (valor === true || valor === 1) return true;
+  const s = String(valor ?? '').trim().toLowerCase();
+  return s === '1' || s === 'true' || s === 'sim';
+}
+
+export async function desmontarPneu({
+  filialId, pneuId, detalhes = null, km = undefined, hr = undefined,
+}) {
   const db = getDb();
   const pneu = await db.prepare(`
     SELECT p.*, v.placa, v.km_atual, v.hr_atual
@@ -338,9 +346,9 @@ export async function desmontarPneu({ filialId, pneuId }) {
     LEFT JOIN veiculos v ON v.id = p.veiculo_id
     WHERE p.id = ? AND p.filial_id = ? AND p.ativo = 1
   `).get(pneuId, filialId);
-  if (!pneu) throw Object.assign(new Error('Pneu não encontrado'), { status: 404 });
+  if (!pneu) throw erroOps('Pneu não encontrado', 404);
   if (pneu.status_pneu !== 'montado' || !pneu.veiculo_id) {
-    throw Object.assign(new Error('Pneu não está montado'), { status: 400 });
+    throw erroOps('Pneu não está montado', 400);
   }
   const data = hojeIso();
   const veiculoId = pneu.veiculo_id;
@@ -355,10 +363,10 @@ export async function desmontarPneu({ filialId, pneuId }) {
       veiculoId,
       tipo: 'retirada',
       data,
-      km: pneu.km_atual,
-      hr: pneu.hr_atual,
+      km: km !== undefined ? km : pneu.km_atual,
+      hr: hr !== undefined ? hr : pneu.hr_atual,
       posicao,
-      detalhes: `WhatsApp · retirou de ${pneu.placa || ''}`,
+      detalhes: detalhes?.trim() || `WhatsApp · retirou de ${pneu.placa || ''}`,
       placa: pneu.placa,
     });
   });
@@ -369,6 +377,37 @@ export async function desmontarPneu({ filialId, pneuId }) {
     veiculo_id: veiculoId,
     estava_montado: true,
   };
+}
+
+/**
+ * Envio ao estoque: troca atômica se houver substituto; desmontagem simples só com autorização explícita.
+ */
+export async function enviarAoEstoqueOuTrocar({
+  filialId,
+  pneuId,
+  pneuEstoqueId = null,
+  permitirVazio = false,
+  detalhes = null,
+  km,
+  hr,
+}) {
+  const substId = parseInt(pneuEstoqueId, 10) || null;
+  if (substId) {
+    const troca = await trocarPorEstoque({
+      filialId,
+      pneuMontadoId: pneuId,
+      pneuEstoqueId: substId,
+    });
+    return { modo: 'troca', ...troca };
+  }
+  if (permitirVazio) {
+    const r = await desmontarPneu({ filialId, pneuId, detalhes, km, hr });
+    return { modo: 'desmontagem_simples', ...r };
+  }
+  throw erroOps(
+    'Informe o pneu do estoque para ocupar a posição, ou autorize desmontagem simples (permitir_vazio)',
+    400,
+  );
 }
 
 export async function registrarRecap({ filialId, pneuId, pneuEstoqueId = null }) {

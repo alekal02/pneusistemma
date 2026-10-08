@@ -459,6 +459,173 @@ async function main() {
     'Gestão descarte bem-sucedido (ops atômico)'
   );
 
+  const origVazio = await pneuEstoque('MATRIZ-8830');
+  const posVazio = (await ops.posicoesLivres(truck.id))[0];
+  await ops.montarPneu({ filialId, pneuId: origVazio.id, veiculoId: truck.id, posicao: posVazio });
+  const tSemAuth = await expectThrow(
+    () => ops.enviarAoEstoqueOuTrocar({ filialId, pneuId: origVazio.id }),
+    /permitir_vazio|Informe o pneu do estoque/i
+  );
+  log(tSemAuth.ok, 'Desmontar sem substituto e sem autorização recusa', tSemAuth.ok ? '' : tSemAuth.msg);
+  log(
+    (await estadoPneu(db, origVazio.id)).status_pneu === 'montado'
+      && Number((await ocupante(db, truck.id, posVazio))?.id) === Number(origVazio.id),
+    'Desmontar recusado: posição continua ocupada'
+  );
+
+  const simples = await ops.enviarAoEstoqueOuTrocar({
+    filialId,
+    pneuId: origVazio.id,
+    permitirVazio: true,
+    detalhes: 'teste desmontagem simples',
+  });
+  log(
+    simples.modo === 'desmontagem_simples'
+      && (await estadoPneu(db, origVazio.id)).status_pneu === 'estoque'
+      && !(await ocupante(db, truck.id, posVazio)),
+    'Desmontagem simples autorizada esvazia a posição de propósito'
+  );
+
+  const origHttp = await pneuEstoque('MATRIZ-8831');
+  const subHttp = await pneuEstoque('MATRIZ-8832');
+  const subHttp2 = await pneuEstoque('MATRIZ-8833');
+  const origHttp2 = await pneuEstoque('MATRIZ-8834');
+  const origHttp3 = await pneuEstoque('MATRIZ-8835');
+  const livresHttp = await ops.posicoesLivres(truck.id);
+  await ops.montarPneu({ filialId, pneuId: origHttp.id, veiculoId: truck.id, posicao: livresHttp[0] });
+  await ops.montarPneu({ filialId, pneuId: origHttp2.id, veiculoId: truck.id, posicao: livresHttp[1] });
+  await ops.montarPneu({ filialId, pneuId: origHttp3.id, veiculoId: truck.id, posicao: livresHttp[2] });
+
+  const express = (await import('express')).default;
+  const authRouter = (await import(toFileUrl(path.join(BACKEND, 'src/routes/auth.js')))).default;
+  const pneusRouter = (await import(toFileUrl(path.join(BACKEND, 'src/routes/pneus.js')))).default;
+  const arRouter = (await import(toFileUrl(path.join(BACKEND, 'src/routes/acesso-rapido.js')))).default;
+  const { gerarTokenAcessoRapido } = await import(toFileUrl(path.join(BACKEND, 'src/services/acesso-rapido.js')));
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/auth', authRouter);
+  app.use('/api/pneus', pneusRouter);
+  app.use('/api/acesso-rapido', arRouter);
+  const httpServer = await new Promise((resolve) => {
+    const s = app.listen(0, '127.0.0.1', () => resolve(s));
+  });
+  const { port } = httpServer.address();
+  const api = `http://127.0.0.1:${port}/api`;
+
+  async function http(metodo, caminho, { token, body } = {}) {
+    const res = await fetch(`${api}${caminho}`, {
+      method: metodo,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const texto = await res.text();
+    let dados = null;
+    try { dados = texto ? JSON.parse(texto) : null; } catch { dados = { raw: texto }; }
+    return { status: res.status, dados };
+  }
+
+  const login = await http('POST', '/auth/login', { body: { login: 'matriz', senha: 'matriz123' } });
+  const jwtTok = login.dados?.token;
+  log(login.status === 200 && !!jwtTok, 'HTTP login matriz para testar endpoints');
+
+  const semFlag = await http('POST', `/pneus/${origHttp.id}/desmontar`, { token: jwtTok, body: {} });
+  log(semFlag.status === 400, 'POST /desmontar sem substituto e sem flag → 400', String(semFlag.dados?.erro || semFlag.status));
+  log(
+    (await estadoPneu(db, origHttp.id)).status_pneu === 'montado',
+    'POST /desmontar recusado: original permanece montado'
+  );
+
+  const montado1E = await ocupante(db, truck.id, pos1E);
+  const incomp = await http('POST', `/pneus/${montado1E.id}/desmontar`, {
+    token: jwtTok,
+    body: { montar_pneu_id: subIncomp.id },
+  });
+  log(incomp.status === 400, 'POST /desmontar substituto incompatível → 400', String(incomp.dados?.erro || incomp.status));
+  log(
+    (await estadoPneu(db, montado1E.id)).status_pneu === 'montado'
+      && (await estadoPneu(db, subIncomp.id)).status_pneu === 'estoque',
+    'POST /desmontar incompatível: nada gravado'
+  );
+
+  const outraFil = await http('POST', `/pneus/${origHttp.id}/desmontar`, {
+    token: jwtTok,
+    body: { montar_pneu_id: subOutra.id },
+  });
+  log(outraFil.status === 400, 'POST /desmontar outra filial → 400', String(outraFil.dados?.erro || outraFil.status));
+  log((await estadoPneu(db, origHttp.id)).status_pneu === 'montado', 'POST /desmontar outra filial: original intacto');
+
+  const trocaHttp = await http('POST', `/pneus/${origHttp.id}/desmontar`, {
+    token: jwtTok,
+    body: { montar_pneu_id: subHttp.id },
+  });
+  log(
+    [200, 201].includes(trocaHttp.status)
+      && (await estadoPneu(db, origHttp.id)).status_pneu === 'estoque'
+      && (await estadoPneu(db, subHttp.id)).status_pneu === 'montado',
+    'POST /desmontar com montar_pneu_id faz troca atômica'
+  );
+
+  const simplesHttp = await http('POST', `/pneus/${origHttp2.id}/desmontar`, {
+    token: jwtTok,
+    body: { permitir_vazio: true, detalhes: 'HTTP desmontagem simples' },
+  });
+  log(
+    simplesHttp.status === 200
+      && (await estadoPneu(db, origHttp2.id)).status_pneu === 'estoque'
+      && simplesHttp.dados?.modo === 'desmontagem_simples',
+    'POST /desmontar com permitir_vazio autoriza desmontagem simples'
+  );
+
+  const { token: tokAr } = await gerarTokenAcessoRapido({
+    tipo: 'medir',
+    veiculoId: truck.id,
+    filialId,
+  });
+  const arSem = await http('POST', '/acesso-rapido/pneu-acao', {
+    body: { token: tokAr, acao: 'estoque', pneu_id: origHttp3.id },
+  });
+  log(arSem.status === 400, 'pneu-acao estoque sem substituto → 400', String(arSem.dados?.erro || arSem.status));
+  log((await estadoPneu(db, origHttp3.id)).status_pneu === 'montado', 'pneu-acao estoque recusado: posição íntegra');
+
+  const arTroca = await http('POST', '/acesso-rapido/pneu-acao', {
+    body: {
+      token: tokAr,
+      acao: 'estoque',
+      pneu_id: origHttp3.id,
+      montar_pneu_id: subHttp2.id,
+    },
+  });
+  log(
+    [200, 201].includes(arTroca.status)
+      && (await estadoPneu(db, origHttp3.id)).status_pneu === 'estoque'
+      && (await estadoPneu(db, subHttp2.id)).status_pneu === 'montado',
+    'pneu-acao estoque com montar_pneu_id: troca atômica (modal do link)'
+  );
+
+  const origArSimples = await pneuEstoque('MATRIZ-8836');
+  const posArSimples = (await ops.posicoesLivres(truck.id))[0];
+  await ops.montarPneu({ filialId, pneuId: origArSimples.id, veiculoId: truck.id, posicao: posArSimples });
+  const arSimples = await http('POST', '/acesso-rapido/pneu-acao', {
+    body: {
+      token: tokAr,
+      acao: 'estoque',
+      pneu_id: origArSimples.id,
+      permitir_vazio: true,
+    },
+  });
+  log(
+    arSimples.status === 200 && (await estadoPneu(db, origArSimples.id)).status_pneu === 'estoque',
+    'pneu-acao estoque com permitir_vazio: desmontagem simples'
+  );
+
+  await new Promise((resolve, reject) => {
+    httpServer.close((err) => (err ? reject(err) : resolve()));
+  });
+
   await closePool();
   try { await pglite.server?.stop?.(); } catch { /* ignore */ }
 

@@ -263,6 +263,7 @@ router.post('/pneu-acao', async (req, res, next) => {
       montar_pneu_id,
       veiculo_destino_id,
       motivo,
+      permitir_vazio,
     } = req.body || {};
     const row = await tokenOuErro(token, ['medir', 'troca']);
     const acaoNorm = String(acao || '');
@@ -288,17 +289,15 @@ router.post('/pneu-acao', async (req, res, next) => {
     let result;
     switch (acaoNorm) {
       case 'estoque': {
-        const substId = montar_pneu_id ? parseInt(montar_pneu_id, 10) : null;
-        if (substId) {
-          result = await ops.trocarPorEstoque({
-            filialId,
-            pneuMontadoId: pneuId,
-            pneuEstoqueId: substId,
-          });
-          break;
+        result = await ops.enviarAoEstoqueOuTrocar({
+          filialId,
+          pneuId,
+          pneuEstoqueId: montar_pneu_id,
+          permitirVazio: ops.autorizarDesmontagemSimples(permitir_vazio),
+        });
+        if (result.modo === 'desmontagem_simples') {
+          result = { mensagem: `Fogo ${result.fogo} enviado ao estoque`, ...result };
         }
-        result = await ops.desmontarPneu({ filialId, pneuId });
-        result = { mensagem: `Fogo ${result.fogo} enviado ao estoque`, ...result };
         break;
       }
       case 'recap': {
@@ -464,20 +463,18 @@ router.post('/troca', async (req, res, next) => {
       return res.status(400).json({ erro: validacao.erros.join(' ') });
     }
 
-    await ops.desmontarPneu({ filialId, pneuId: montado.id });
-    const montagem = await ops.montarPneu({
+    const troca = await ops.trocarPorEstoque({
       filialId,
-      pneuId: estoque.id,
-      veiculoId: veiculo.id,
-      posicao,
+      pneuMontadoId: montado.id,
+      pneuEstoqueId: estoque.id,
     });
     await marcarTokenUsado(row.id);
 
     const detalhe = await montarDetalheVeiculo(veiculo.id, filialId);
     res.json({
-      mensagem: `Trocou fogo ${montado.numero_fogo} → ${montagem.fogo} em ${labelPosicao(posicao)}`,
+      mensagem: troca.mensagem || `Trocou fogo ${montado.numero_fogo} → ${troca.montado?.fogo} em ${labelPosicao(posicao)}`,
       retirado: { id: montado.id, fogo: montado.numero_fogo, posicao },
-      montado: montagem,
+      montado: troca.montado,
       veiculo: detalhe,
     });
   } catch (err) {
