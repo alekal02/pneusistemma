@@ -291,17 +291,36 @@ router.post('/pneu-acao', async (req, res, next) => {
         result = await ops.desmontarPneu({ filialId, pneuId });
         result = { mensagem: `Fogo ${result.fogo} enviado ao estoque`, ...result };
         break;
-      case 'recap':
-        result = await ops.registrarRecap({ filialId, pneuId });
+      case 'recap': {
+        const substId = montar_pneu_id ? parseInt(montar_pneu_id, 10) : null;
+        result = await ops.registrarRecap({
+          filialId,
+          pneuId,
+          pneuEstoqueId: substId || null,
+        });
+        const montou = result.substituto
+          ? ` · fogo ${result.substituto.fogo} montado em ${result.substituto.posicao}`
+          : '';
         result = {
-          mensagem: `Fogo ${result.fogo} enviado à recapagem (${result.vida}ª vida)`,
+          mensagem: `Fogo ${result.fogo} enviado à recapagem (${result.vida}ª vida)${montou}`,
           ...result,
         };
         break;
-      case 'descarte':
-        result = await ops.registrarDescarte({ filialId, pneuId, motivo: motivo || null });
-        result = { mensagem: `Fogo ${result.fogo} enviado ao descarte`, ...result };
+      }
+      case 'descarte': {
+        const substId = montar_pneu_id ? parseInt(montar_pneu_id, 10) : null;
+        result = await ops.registrarDescarte({
+          filialId,
+          pneuId,
+          motivo: motivo || null,
+          pneuEstoqueId: substId || null,
+        });
+        const montou = result.substituto
+          ? ` · fogo ${result.substituto.fogo} montado em ${result.substituto.posicao}`
+          : '';
+        result = { mensagem: `Fogo ${result.fogo} enviado ao descarte${montou}`, ...result };
         break;
+      }
       case 'reposicionar': {
         if (!posicao) return res.status(400).json({ erro: 'Informe a nova posição' });
         if (pneu.status_pneu !== 'montado' || !pneu.veiculo_id) {

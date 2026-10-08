@@ -306,6 +306,44 @@ async function enviarLinkCadastro(ctx, tipo) {
   }
 }
 
+async function pedirSubstitutoObrigatorio(ctx, {
+  fluxo, passo, dados, titulo, placa, posicao,
+}) {
+  const estoque = await ops.listarEstoque(ctx.filialId, 20);
+  if (!estoque.length) {
+    await clear(ctx);
+    await reply(
+      ctx,
+      [
+        `⚠️ ${titulo}`,
+        `Estoque vazio — o pneu original permanece montado em *${placa}* / *${posicao}*.`,
+        'Cadastre um pneu (*3*) e tente de novo.',
+        '',
+        textoMenu(),
+      ].join('\n')
+    );
+    return false;
+  }
+  await setFluxo(ctx, fluxo, passo, dados);
+  const lista = estoque
+    .slice(0, 15)
+    .map((p) => `• *${p.numero_fogo}* — ${[p.marca, p.modelo].filter(Boolean).join(' ') || p.tipo_pneu}`)
+    .join('\n');
+  await reply(
+    ctx,
+    [
+      titulo,
+      `Para concluir, monte um pneu do estoque em *${placa}* / *${posicao}*.`,
+      '',
+      `Estoque:\n${lista}`,
+      '',
+      'Envie o *nº de fogo* do estoque.',
+      '*0* cancela — o pneu original permanece montado.',
+    ].join('\n')
+  );
+  return true;
+}
+
 async function pedirMontarEstoque(ctx, { veiculoId, posicao, placa, acaoLabel }) {
   const estoque = await ops.listarEstoque(ctx.filialId, 20);
   if (!estoque.length) {
@@ -508,6 +546,37 @@ async function passoEstoque(ctx, sessao, texto) {
 async function passoRecap(ctx, sessao, texto) {
   const d = { ...(sessao.dados || {}) };
 
+  if (sessao.passo === 'substituto') {
+    if (await recusarFogoInvalido(ctx, texto)) return;
+    const sub = await ops.buscarPneuPorFogo(ctx.filialId, String(texto).replace(/^fogo\s+/i, '').trim());
+    if (!sub || sub.status_pneu !== 'estoque') {
+      await reply(ctx, 'Fogo não encontrado no *estoque*. Envie outro nº ou *0* (o pneu original permanece montado).');
+      return;
+    }
+    try {
+      await ops.validarSubstitutoEstoque({
+        filialId: ctx.filialId,
+        pneuEstoqueId: sub.id,
+        veiculoId: d.veiculo_id,
+        posicao: d.posicao,
+      });
+      const r = await ops.registrarRecap({
+        filialId: ctx.filialId,
+        pneuId: d.pneu_id,
+        pneuEstoqueId: sub.id,
+      });
+      const lembrete = `\n\nQuando o recap voltar: digite *6* e o fogo *${r.fogo}* → opção *devolver ao estoque*.`;
+      const montou = r.substituto
+        ? `\nFogo *${r.substituto.fogo}* montado em *${r.substituto.placa}* (${r.substituto.posicao}).`
+        : '';
+      await clear(ctx);
+      await reply(ctx, `✅ Fogo *${r.fogo}* em recapagem (${r.vida}ª vida).${montou}${lembrete}\n\n` + textoMenu());
+    } catch (err) {
+      await reply(ctx, `❌ ${err.message}\nEnvie outro nº de fogo ou *0* (original permanece montado).`);
+    }
+    return;
+  }
+
   if (sessao.passo === 'devolver') {
     const sn = simNao(texto);
     if (sn === false) {
@@ -557,20 +626,27 @@ async function passoRecap(ctx, sessao, texto) {
     return;
   }
 
+  if (pneu.status_pneu === 'montado' && pneu.veiculo_id && pneu.posicao) {
+    await pedirSubstitutoObrigatorio(ctx, {
+      fluxo: 'recap',
+      passo: 'substituto',
+      dados: {
+        pneu_id: pneu.id,
+        fogo: pneu.numero_fogo,
+        veiculo_id: pneu.veiculo_id,
+        posicao: pneu.posicao,
+        placa: pneu.placa,
+      },
+      titulo: `♻️ Fogo *${pneu.numero_fogo}* será enviado à recap`,
+      placa: pneu.placa,
+      posicao: pneu.posicao,
+    });
+    return;
+  }
+
   try {
     const r = await ops.registrarRecap({ filialId: ctx.filialId, pneuId: pneu.id });
     const lembrete = `\n\nQuando o recap voltar: digite *6* e o fogo *${r.fogo}* → opção *devolver ao estoque*.`;
-
-    if (r.estava_montado && r.veiculo_id && r.posicao) {
-      await pedirMontarEstoque(ctx, {
-        veiculoId: r.veiculo_id,
-        posicao: r.posicao,
-        placa: r.placa,
-        acaoLabel: `Fogo *${r.fogo}* enviado à recap (${r.vida}ª vida)`,
-      });
-      return;
-    }
-
     await clear(ctx);
     await reply(ctx, `✅ Fogo *${r.fogo}* em recapagem (${r.vida}ª vida).${lembrete}\n\n` + textoMenu());
   } catch (err) {
@@ -580,6 +656,36 @@ async function passoRecap(ctx, sessao, texto) {
 }
 
 async function passoDescarte(ctx, sessao, texto) {
+  if (sessao.passo === 'substituto') {
+    const d = { ...(sessao.dados || {}) };
+    if (await recusarFogoInvalido(ctx, texto)) return;
+    const sub = await ops.buscarPneuPorFogo(ctx.filialId, String(texto).replace(/^fogo\s+/i, '').trim());
+    if (!sub || sub.status_pneu !== 'estoque') {
+      await reply(ctx, 'Fogo não encontrado no *estoque*. Envie outro nº ou *0* (o pneu original permanece montado).');
+      return;
+    }
+    try {
+      await ops.validarSubstitutoEstoque({
+        filialId: ctx.filialId,
+        pneuEstoqueId: sub.id,
+        veiculoId: d.veiculo_id,
+        posicao: d.posicao,
+      });
+      await setFluxo(ctx, 'descarte', 'confirma', {
+        ...d,
+        substituto_id: sub.id,
+        substituto_fogo: sub.numero_fogo,
+      });
+      await reply(
+        ctx,
+        `⚠️ Descartar fogo *${d.fogo}* e montar *${sub.numero_fogo}* em *${d.placa}* / *${d.posicao}*?\nMotivo: ${d.motivo || '—'}\n\n*1* Sim · *0* Não (original permanece montado)`
+      );
+    } catch (err) {
+      await reply(ctx, `❌ ${err.message}\nEnvie outro nº de fogo ou *0* (original permanece montado).`);
+    }
+    return;
+  }
+
   if (sessao.passo === 'confirma') {
     const d = { ...(sessao.dados || {}) };
     const sn = simNao(texto);
@@ -592,28 +698,38 @@ async function passoDescarte(ctx, sessao, texto) {
       await reply(ctx, 'Responda *1* ou *0*.');
       return;
     }
-    const r = await ops.registrarDescarte({
-      filialId: ctx.filialId,
-      pneuId: d.pneu_id,
-      motivo: d.motivo,
-    });
-    if (r.estava_montado && r.veiculo_id && r.posicao) {
-      await pedirMontarEstoque(ctx, {
-        veiculoId: r.veiculo_id,
-        posicao: r.posicao,
-        placa: r.placa,
-        acaoLabel: `Fogo *${r.fogo}* descartado`,
+    try {
+      const r = await ops.registrarDescarte({
+        filialId: ctx.filialId,
+        pneuId: d.pneu_id,
+        motivo: d.motivo,
+        pneuEstoqueId: d.substituto_id || null,
       });
-      return;
+      const montou = r.substituto
+        ? `\nFogo *${r.substituto.fogo}* montado em *${r.substituto.placa}* (${r.substituto.posicao}).`
+        : '';
+      await clear(ctx);
+      await reply(ctx, `✅ Fogo *${r.fogo}* no descarte.${montou}\n\n` + textoMenu());
+    } catch (err) {
+      await reply(ctx, `❌ ${err.message}\nEnvie outro nº ou *0* (original permanece montado).`);
     }
-    await clear(ctx);
-    await reply(ctx, `✅ Fogo *${r.fogo}* no descarte.\n\n` + textoMenu());
     return;
   }
 
   if (sessao.passo === 'motivo') {
     const d = { ...(sessao.dados || {}) };
     d.motivo = /^(?:-|\.|pular|skip)$/i.test(String(texto).trim()) ? null : String(texto).trim();
+    if (d.estava_montado && d.veiculo_id && d.posicao) {
+      await pedirSubstitutoObrigatorio(ctx, {
+        fluxo: 'descarte',
+        passo: 'substituto',
+        dados: d,
+        titulo: `🗑️ Descarte de fogo *${d.fogo}*`,
+        placa: d.placa,
+        posicao: d.posicao,
+      });
+      return;
+    }
     await setFluxo(ctx, 'descarte', 'confirma', d);
     await reply(ctx, `⚠️ Descartar fogo *${d.fogo}*?\nMotivo: ${d.motivo || '—'}\n\n*1* Sim · *0* Não`);
     return;
@@ -628,6 +744,10 @@ async function passoDescarte(ctx, sessao, texto) {
   await setFluxo(ctx, 'descarte', 'motivo', {
     pneu_id: pneu.id,
     fogo: pneu.numero_fogo,
+    estava_montado: pneu.status_pneu === 'montado' && !!pneu.veiculo_id,
+    veiculo_id: pneu.veiculo_id || null,
+    posicao: pneu.posicao || null,
+    placa: pneu.placa || null,
   });
   await reply(ctx, 'Motivo do descarte? (ou `-` para pular)');
 }

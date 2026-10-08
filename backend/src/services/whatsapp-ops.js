@@ -17,6 +17,67 @@ import {
   layoutPadraoPorTipo,
 } from '../pneus-layouts.js';
 
+function erroOps(mensagem, status) {
+  return Object.assign(new Error(mensagem), { status });
+}
+
+function falharTxSeTeste() {
+  if (process.env.PNEU_TEST_FALHAR_TX === '1') {
+    throw erroOps('falha simulada na transação', 500);
+  }
+}
+
+/**
+ * Valida o pneu substituto (filial, estoque, posição, validarMontagem) sem alterar o banco.
+ */
+export async function validarSubstitutoEstoque({ filialId, pneuEstoqueId, veiculoId, posicao }) {
+  const db = getDb();
+  const id = parseInt(pneuEstoqueId, 10);
+  if (!id) {
+    throw erroOps('Informe o pneu do estoque para ocupar a posição', 400);
+  }
+  const estoque = await db.prepare('SELECT * FROM pneus WHERE id = ?').get(id);
+  if (!estoque) {
+    throw erroOps('Pneu do estoque não encontrado', 404);
+  }
+  if (Number(estoque.filial_id) !== Number(filialId)) {
+    throw erroOps('Pneu substituto pertence a outra filial', 400);
+  }
+  if (Number(estoque.ativo) !== 1) {
+    throw erroOps('Pneu substituto indisponível (inativo)', 400);
+  }
+  if (estoque.status_pneu !== 'estoque') {
+    const motivo = estoque.status_pneu === 'montado'
+      ? 'já está montado'
+      : estoque.status_pneu === 'recapagem'
+        ? 'está em recapagem'
+        : estoque.status_pneu === 'descarte'
+          ? 'está no descarte'
+          : `está em ${estoque.status_pneu}`;
+    throw erroOps(`Pneu substituto indisponível (${motivo})`, 400);
+  }
+  const veiculo = await db.prepare(`
+    SELECT * FROM veiculos WHERE id = ? AND filial_id = ? AND ativo = 1
+  `).get(veiculoId, filialId);
+  if (!veiculo) {
+    throw erroOps('Veículo não encontrado', 404);
+  }
+  const pos = String(posicao || '').trim().toUpperCase();
+  const layout = getLayout(veiculo.layout_pneus || LAYOUT_PADRAO);
+  if (!layout.posicoes.includes(pos)) {
+    throw erroOps(`Posição ${pos} inválida neste veículo`, 400);
+  }
+  const validacao = validarMontagem({
+    condicao: estoque.condicao,
+    tipo_pneu: estoque.tipo_pneu,
+    posicao: pos,
+  });
+  if (!validacao.ok) {
+    throw erroOps(validacao.erros.join(' '), 400);
+  }
+  return { estoque, veiculo, posicao: pos };
+}
+
 function hojeIso() {
   return new Date().toISOString().split('T')[0];
 }
@@ -310,32 +371,46 @@ export async function desmontarPneu({ filialId, pneuId }) {
   };
 }
 
-export async function registrarRecap({ filialId, pneuId }) {
+export async function registrarRecap({ filialId, pneuId, pneuEstoqueId = null }) {
   const db = getDb();
   const limites = getLimites();
   const pneu = await db.prepare(`
     SELECT * FROM pneus WHERE id = ? AND filial_id = ? AND ativo = 1
   `).get(pneuId, filialId);
-  if (!pneu) throw Object.assign(new Error('Pneu não encontrado'), { status: 404 });
+  if (!pneu) throw erroOps('Pneu não encontrado', 404);
   if (pneu.status_pneu === 'recapagem') {
-    throw Object.assign(new Error('Pneu já está em recapagem'), { status: 400 });
+    throw erroOps('Pneu já está em recapagem', 400);
   }
   if (pneu.status_pneu === 'descarte') {
-    throw Object.assign(new Error('Pneu já está no descarte'), { status: 400 });
+    throw erroOps('Pneu já está no descarte', 400);
   }
   const novaVida = (pneu.vida_recap || 0) + 1;
   if (novaVida > (limites.max_recaps || 6)) {
-    throw Object.assign(new Error(`Limite de recaps atingido (${limites.max_recaps})`), { status: 400 });
+    throw erroOps(`Limite de recaps atingido (${limites.max_recaps})`, 400);
   }
   const data = hojeIso();
   const estavaMontado = pneu.status_pneu === 'montado' && pneu.veiculo_id;
   const veiculoId = pneu.veiculo_id || null;
   const posicao = pneu.posicao || null;
   let placa = null;
+  let substituto = null;
   if (estavaMontado) {
     const veiculo = await db.prepare('SELECT * FROM veiculos WHERE id = ?').get(pneu.veiculo_id);
     placa = veiculo?.placa || null;
+    if (!pneuEstoqueId) {
+      throw erroOps('Informe o pneu do estoque para ocupar a posição', 400);
+    }
+    if (Number(pneuEstoqueId) === Number(pneuId)) {
+      throw erroOps('O pneu substituto deve ser outro pneu do estoque', 400);
+    }
+    substituto = await validarSubstitutoEstoque({
+      filialId,
+      pneuEstoqueId,
+      veiculoId,
+      posicao,
+    });
   }
+  let montagem = null;
   await db.transaction(async () => {
     if (estavaMontado) {
       const veiculo = await db.prepare('SELECT * FROM veiculos WHERE id = ?').get(pneu.veiculo_id);
@@ -370,6 +445,15 @@ export async function registrarRecap({ filialId, pneuId }) {
         : `WhatsApp · enviou à recap (${novaVida}ª vida) · origem estoque`,
       placa,
     });
+    if (estavaMontado && substituto) {
+      falharTxSeTeste();
+      montagem = await montarPneu({
+        filialId,
+        pneuId: substituto.estoque.id,
+        veiculoId,
+        posicao,
+      });
+    }
   });
   return {
     fogo: pneu.numero_fogo,
@@ -378,6 +462,7 @@ export async function registrarRecap({ filialId, pneuId }) {
     veiculo_id: veiculoId,
     posicao,
     placa,
+    substituto: montagem,
   };
 }
 
@@ -422,29 +507,39 @@ export async function devolverRecapAoEstoque({ filialId, pneuId }) {
 }
 
 /**
- * Troca o pneu montado por outro do estoque na mesma posição.
+ * Troca o pneu montado por outro do estoque na mesma posição (validação + transação única).
  */
 export async function trocarPorEstoque({ filialId, pneuMontadoId, pneuEstoqueId }) {
-  const montado = await getDb().prepare(`
+  const db = getDb();
+  const montado = await db.prepare(`
     SELECT * FROM pneus
     WHERE id = ? AND filial_id = ? AND ativo = 1 AND status_pneu = 'montado'
   `).get(pneuMontadoId, filialId);
-  if (!montado) throw Object.assign(new Error('Pneu montado não encontrado'), { status: 404 });
+  if (!montado) throw erroOps('Pneu montado não encontrado', 404);
+  if (!montado.veiculo_id || !montado.posicao) {
+    throw erroOps('Pneu montado sem veículo/posição', 400);
+  }
+  if (Number(pneuEstoqueId) === Number(pneuMontadoId)) {
+    throw erroOps('O pneu substituto deve ser outro pneu do estoque', 400);
+  }
 
-  const estoque = await getDb().prepare(`
-    SELECT * FROM pneus
-    WHERE id = ? AND filial_id = ? AND ativo = 1 AND status_pneu = 'estoque'
-  `).get(pneuEstoqueId, filialId);
-  if (!estoque) throw Object.assign(new Error('Pneu do estoque não encontrado'), { status: 404 });
-
-  const posicao = montado.posicao;
-  const veiculoId = montado.veiculo_id;
-  const retirado = await desmontarPneu({ filialId, pneuId: montado.id });
-  const montagem = await montarPneu({
+  const { estoque } = await validarSubstitutoEstoque({
     filialId,
-    pneuId: estoque.id,
-    veiculoId,
-    posicao,
+    pneuEstoqueId,
+    veiculoId: montado.veiculo_id,
+    posicao: montado.posicao,
+  });
+
+  const { retirado, montagem } = await db.transaction(async () => {
+    const retiradoTx = await desmontarPneu({ filialId, pneuId: montado.id });
+    falharTxSeTeste();
+    const montagemTx = await montarPneu({
+      filialId,
+      pneuId: estoque.id,
+      veiculoId: montado.veiculo_id,
+      posicao: montado.posicao,
+    });
+    return { retirado: retiradoTx, montagem: montagemTx };
   });
   return {
     mensagem: `Trocou fogo ${retirado.fogo} → ${montagem.fogo} em ${montagem.label}`,
@@ -624,7 +719,7 @@ export async function moverOuTrocarNaFrota({
   };
 }
 
-export async function registrarDescarte({ filialId, pneuId, motivo = null }) {
+export async function registrarDescarte({ filialId, pneuId, motivo = null, pneuEstoqueId = null }) {
   const db = getDb();
   const pneu = await db.prepare(`
     SELECT p.*, v.placa, v.km_atual, v.hr_atual
@@ -632,14 +727,30 @@ export async function registrarDescarte({ filialId, pneuId, motivo = null }) {
     LEFT JOIN veiculos v ON v.id = p.veiculo_id
     WHERE p.id = ? AND p.filial_id = ? AND p.ativo = 1
   `).get(pneuId, filialId);
-  if (!pneu) throw Object.assign(new Error('Pneu não encontrado'), { status: 404 });
+  if (!pneu) throw erroOps('Pneu não encontrado', 404);
   if (pneu.status_pneu === 'descarte') {
-    throw Object.assign(new Error('Pneu já está no descarte'), { status: 400 });
+    throw erroOps('Pneu já está no descarte', 400);
   }
   const data = hojeIso();
   const estavaMontado = pneu.status_pneu === 'montado' && pneu.veiculo_id;
   const veiculoId = pneu.veiculo_id || null;
   const posicao = pneu.posicao || null;
+  let substituto = null;
+  if (estavaMontado) {
+    if (!pneuEstoqueId) {
+      throw erroOps('Informe o pneu do estoque para ocupar a posição', 400);
+    }
+    if (Number(pneuEstoqueId) === Number(pneuId)) {
+      throw erroOps('O pneu substituto deve ser outro pneu do estoque', 400);
+    }
+    substituto = await validarSubstitutoEstoque({
+      filialId,
+      pneuEstoqueId,
+      veiculoId,
+      posicao,
+    });
+  }
+  let montagem = null;
   await db.transaction(async () => {
     if (estavaMontado) {
       await registrarMovimentacao(db, {
@@ -674,6 +785,15 @@ export async function registrarDescarte({ filialId, pneuId, motivo = null }) {
       detalhes: motivo?.trim() || 'WhatsApp · enviou ao descarte',
       placa: pneu.placa || null,
     });
+    if (estavaMontado && substituto) {
+      falharTxSeTeste();
+      montagem = await montarPneu({
+        filialId,
+        pneuId: substituto.estoque.id,
+        veiculoId,
+        posicao,
+      });
+    }
   });
   return {
     fogo: pneu.numero_fogo,
@@ -681,6 +801,7 @@ export async function registrarDescarte({ filialId, pneuId, motivo = null }) {
     veiculo_id: veiculoId,
     posicao,
     placa: pneu.placa || null,
+    substituto: montagem,
   };
 }
 
