@@ -287,10 +287,20 @@ router.post('/pneu-acao', async (req, res, next) => {
 
     let result;
     switch (acaoNorm) {
-      case 'estoque':
+      case 'estoque': {
+        const substId = montar_pneu_id ? parseInt(montar_pneu_id, 10) : null;
+        if (substId) {
+          result = await ops.trocarPorEstoque({
+            filialId,
+            pneuMontadoId: pneuId,
+            pneuEstoqueId: substId,
+          });
+          break;
+        }
         result = await ops.desmontarPneu({ filialId, pneuId });
         result = { mensagem: `Fogo ${result.fogo} enviado ao estoque`, ...result };
         break;
+      }
       case 'recap': {
         const substId = montar_pneu_id ? parseInt(montar_pneu_id, 10) : null;
         result = await ops.registrarRecap({

@@ -1296,7 +1296,7 @@
 
   <dialog id="modal-trocar-estoque" class="modal">
     <form id="form-trocar-estoque" method="dialog">
-      <h3>Trocar pneu</h3>
+      <h3 id="trocar-estoque-titulo">Trocar pneu</h3>
       <p class="hint" id="trocar-estoque-resumo">Retira o pneu atual e monta outro do estoque na mesma posição.</p>
       <div class="form-group">
         <label for="trocar-estoque-busca">Buscar no estoque</label>
@@ -1308,7 +1308,7 @@
       </div>
       <div class="modal-actions">
         <button type="button" class="btn btn-ghost" id="btn-trocar-estoque-cancelar">Cancelar</button>
-        <button type="submit" class="btn btn-primary">Confirmar troca</button>
+        <button type="submit" class="btn btn-primary" id="trocar-estoque-confirmar">Confirmar troca</button>
       </div>
     </form>
   </dialog>

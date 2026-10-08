@@ -303,6 +303,162 @@ async function main() {
   const recapEst = await ops.registrarRecap({ filialId, pneuId: recapEstoque.id });
   log(recapEst.estava_montado === false && (await estadoPneu(db, recapEstoque.id)).status_pneu === 'recapagem', 'Recap de pneu já em estoque segue sem substituto');
 
+  // --- Menu 5 e gestão web (mesmas ops atômicas) ---
+  const origM5 = await estadoPneu(db, origA.id);
+  log(origM5.status_pneu === 'montado' && origM5.posicao === pos1E, 'Pré-condição menu 5: original ainda montado em 1E');
+
+  await salvarSessao({
+    filialId,
+    telefone: '11977770001',
+    chatJid: '',
+    fluxo: 'estoque',
+    passo: 'fogo',
+    dados: {},
+  });
+  await processarMensagemMenu({
+    filialId,
+    phone: '11977770001',
+    destino: '11977770001',
+    chatJid: '',
+    texto: origA.numero_fogo,
+  });
+  const aposFogoM5 = await estadoPneu(db, origA.id);
+  log(
+    aposFogoM5.status_pneu === 'montado' && aposFogoM5.posicao === pos1E,
+    'Menu 5: informar fogo montado NÃO desmonta antes do substituto'
+  );
+
+  await salvarSessao({
+    filialId,
+    telefone: '11977770002',
+    chatJid: '',
+    fluxo: 'estoque',
+    passo: 'substituto',
+    dados: {
+      pneu_id: origA.id,
+      fogo: origA.numero_fogo,
+      veiculo_id: truck.id,
+      posicao: pos1E,
+      placa: truck.placa,
+    },
+  });
+  await processarMensagemMenu({
+    filialId,
+    phone: '11977770002',
+    destino: '11977770002',
+    chatJid: '',
+    texto: 'cancelar',
+  });
+  log(
+    (await estadoPneu(db, origA.id)).status_pneu === 'montado',
+    'Menu 5 cancelamento: original permanece montado'
+  );
+
+  await salvarSessao({
+    filialId,
+    telefone: '11977770003',
+    chatJid: '',
+    fluxo: 'estoque',
+    passo: 'substituto',
+    dados: {
+      pneu_id: origA.id,
+      fogo: origA.numero_fogo,
+      veiculo_id: truck.id,
+      posicao: pos1E,
+      placa: truck.placa,
+    },
+  });
+  await processarMensagemMenu({
+    filialId,
+    phone: '11977770003',
+    destino: '11977770003',
+    chatJid: '',
+    texto: subIncomp.numero_fogo,
+  });
+  log(
+    (await estadoPneu(db, origA.id)).status_pneu === 'montado'
+      && (await estadoPneu(db, subIncomp.id)).status_pneu === 'estoque',
+    'Menu 5 substituto incompatível: posição íntegra'
+  );
+
+  const tGestaoSemSub = await expectThrow(
+    () => ops.registrarRecap({ filialId, pneuId: origA.id, pneuEstoqueId: null }),
+    /Informe o pneu do estoque/i
+  );
+  log(tGestaoSemSub.ok, 'Gestão: recap montado sem substituto recusa', tGestaoSemSub.ok ? '' : tGestaoSemSub.msg);
+
+  const tGestaoFilial = await expectThrow(
+    () => ops.registrarDescarte({ filialId, pneuId: origA.id, pneuEstoqueId: subOutra.id }),
+    /outra filial/i
+  );
+  log(tGestaoFilial.ok, 'Gestão: substituto de outra filial recusado', tGestaoFilial.ok ? '' : tGestaoFilial.msg);
+  log((await estadoPneu(db, origA.id)).status_pneu === 'montado', 'Gestão outra filial: original intacto');
+
+  const subM5 = await pneuEstoque('MATRIZ-8820');
+  await salvarSessao({
+    filialId,
+    telefone: '11977770004',
+    chatJid: '',
+    fluxo: 'estoque',
+    passo: 'substituto',
+    dados: {
+      pneu_id: origA.id,
+      fogo: origA.numero_fogo,
+      veiculo_id: truck.id,
+      posicao: pos1E,
+      placa: truck.placa,
+    },
+  });
+  await processarMensagemMenu({
+    filialId,
+    phone: '11977770004',
+    destino: '11977770004',
+    chatJid: '',
+    texto: subM5.numero_fogo,
+  });
+  const stM5orig = await estadoPneu(db, origA.id);
+  const stM5sub = await estadoPneu(db, subM5.id);
+  const ocM5 = await ocupante(db, truck.id, pos1E);
+  log(
+    stM5orig.status_pneu === 'estoque'
+      && stM5sub.status_pneu === 'montado'
+      && stM5sub.posicao === pos1E
+      && Number(ocM5?.id) === Number(subM5.id),
+    'Menu 5 bem-sucedido: original no estoque e substituto montado'
+  );
+
+  const origG = await pneuEstoque('MATRIZ-8821');
+  const subG = await pneuEstoque('MATRIZ-8822');
+  await ops.montarPneu({ filialId, pneuId: origG.id, veiculoId: truck.id, posicao: '2DE' });
+  const gestaoRecap = await ops.registrarRecap({
+    filialId,
+    pneuId: origG.id,
+    pneuEstoqueId: subG.id,
+  });
+  log(
+    gestaoRecap.substituto?.fogo === subG.numero_fogo
+      && (await estadoPneu(db, origG.id)).status_pneu === 'recapagem'
+      && (await ocupante(db, truck.id, '2DE'))?.id === subG.id,
+    'Gestão recap bem-sucedida (ops atômico)'
+  );
+
+  const origGd = await pneuEstoque('MATRIZ-8823');
+  const subGd = await pneuEstoque('MATRIZ-8824');
+  const posLivre = (await ops.posicoesLivres(truck.id))[0];
+  await ops.montarPneu({ filialId, pneuId: origGd.id, veiculoId: truck.id, posicao: posLivre });
+  const gestaoDesc = await ops.registrarDescarte({
+    filialId,
+    pneuId: origGd.id,
+    motivo: 'gestao',
+    pneuEstoqueId: subGd.id,
+  });
+  log(
+    gestaoDesc.substituto?.fogo === subGd.numero_fogo
+      && (await estadoPneu(db, origGd.id)).status_pneu === 'descarte'
+      && Number((await ocupante(db, truck.id, posLivre))?.id) === Number(subGd.id),
+    'Gestão descarte bem-sucedido (ops atômico)'
+  );
+
   await closePool();
   try { await pglite.server?.stop?.(); } catch { /* ignore */ }
 

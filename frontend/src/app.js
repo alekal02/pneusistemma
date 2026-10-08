@@ -1951,32 +1951,7 @@ async function montarPneuDoEstoque() {
 
 async function desmontarPneuTruck() {
   if (!pneuSelecionado || !veiculoAtual) return;
-  if (!confirm('Retirar este pneu do caminhão e enviar ao estoque?')) return;
-  try {
-    if (modoAcessoRapido && tokenAcessoRapido) {
-      await fetchJSON(`${API}/acesso-rapido/pneu-acao`, {
-        method: 'POST',
-        body: JSON.stringify({
-          token: tokenAcessoRapido,
-          acao: 'estoque',
-          pneu_id: pneuSelecionado.id,
-        }),
-      });
-    } else {
-      await fetchJSON(`${API}/pneus/${pneuSelecionado.id}/desmontar`, {
-        method: 'POST',
-        body: JSON.stringify({
-          km_veiculo: numOrNull('truck-km') ?? veiculoAtual.km_atual,
-          hr_veiculo: numOrNull('truck-hr') ?? veiculoAtual.hr_atual,
-        }),
-      });
-    }
-    toast('Pneu retirado → estoque');
-    if (modoAcessoRapido) await recarregarAcessoRapido({ silent: true });
-    else await openVeiculoDetalhe(veiculoAtual.id, voltarPara);
-  } catch (err) {
-    toast(err.message, 'error');
-  }
+  await abrirModalTrocarEstoque('troca');
 }
 
 async function reposicionarPneuTruck() {
@@ -2044,13 +2019,43 @@ async function reposicionarPneuTruck() {
   }
 }
 
-async function abrirModalTrocarEstoque() {
+let modoModalEstoque = 'troca';
+
+function textosModalEstoque(modo) {
+  const fogo = pneuSelecionado?.numero_fogo || pneuSelecionado?.id;
+  const pos = pneuSelecionado?.posicao || '';
+  if (modo === 'recap') {
+    return {
+      titulo: 'Recapagem + substituto',
+      resumo: `Envia fogo ${fogo} (${pos}) à recapagem e monta outro do estoque na mesma posição. Cancelar não altera nada.`,
+      confirmar: 'Confirmar recap',
+    };
+  }
+  if (modo === 'descarte') {
+    return {
+      titulo: 'Descarte + substituto',
+      resumo: `Envia fogo ${fogo} (${pos}) ao descarte e monta outro do estoque na mesma posição. Cancelar não altera nada.`,
+      confirmar: 'Confirmar descarte',
+    };
+  }
+  return {
+    titulo: 'Trocar pneu',
+    resumo: `Retira fogo ${fogo} (${pos}) e monta outro do estoque no lugar. Cancelar não altera nada.`,
+    confirmar: 'Confirmar troca',
+  };
+}
+
+async function abrirModalTrocarEstoque(modo = 'troca') {
   if (!pneuSelecionado || !veiculoAtual) return;
+  modoModalEstoque = modo || 'troca';
   const sel = document.getElementById('trocar-estoque-select');
   const resumo = document.getElementById('trocar-estoque-resumo');
-  if (resumo) {
-    resumo.textContent = `Retira fogo ${pneuSelecionado.numero_fogo || pneuSelecionado.id} (${pneuSelecionado.posicao}) e monta outro do estoque no lugar.`;
-  }
+  const tit = document.getElementById('trocar-estoque-titulo');
+  const btn = document.getElementById('trocar-estoque-confirmar');
+  const txt = textosModalEstoque(modoModalEstoque);
+  if (tit) tit.textContent = txt.titulo;
+  if (resumo) resumo.textContent = txt.resumo;
+  if (btn) btn.textContent = txt.confirmar;
   try {
     let lista = [];
     if (modoAcessoRapido && tokenAcessoRapido) {
@@ -2080,9 +2085,38 @@ async function confirmarTrocarEstoque() {
   if (!pneuSelecionado) return;
   const montarId = parseInt(document.getElementById('trocar-estoque-select')?.value, 10);
   if (!montarId) return toast('Selecione o pneu do estoque', 'error');
+  const modo = modoModalEstoque || 'troca';
   try {
     let result;
-    if (modoAcessoRapido && tokenAcessoRapido) {
+    if (modo === 'recap' || modo === 'descarte') {
+      if (modoAcessoRapido && tokenAcessoRapido) {
+        result = await fetchJSON(`${API}/acesso-rapido/pneu-acao`, {
+          method: 'POST',
+          body: JSON.stringify({
+            token: tokenAcessoRapido,
+            acao: modo,
+            pneu_id: pneuSelecionado.id,
+            montar_pneu_id: montarId,
+          }),
+        });
+      } else {
+        const pontos = pontosFromInputs('truck');
+        const menor = [pontos.externo, pontos.central, pontos.interno, pontos.auxiliar]
+          .filter((v) => v != null);
+        const sulco = menor.length ? Math.min(...menor) : pneuSelecionado.menor_sulco;
+        result = await fetchJSON(`${API}/pneus/${pneuSelecionado.id}/evento`, {
+          method: 'POST',
+          body: JSON.stringify({
+            tipo: modo,
+            km_veiculo: parseInt(document.getElementById('truck-km')?.value, 10) || veiculoAtual?.km_atual,
+            hr_veiculo: numOrNull('truck-hr'),
+            sulco_mm: modo === 'recap' ? (limitesAtuais.sulco_novo_mm || 14) : sulco,
+            montar_pneu_id: montarId,
+            detalhes: 'Registrado pelo painel do veículo',
+          }),
+        });
+      }
+    } else if (modoAcessoRapido && tokenAcessoRapido) {
       result = await fetchJSON(`${API}/acesso-rapido/pneu-acao`, {
         method: 'POST',
         body: JSON.stringify({
@@ -2099,7 +2133,7 @@ async function confirmarTrocarEstoque() {
       });
     }
     document.getElementById('modal-trocar-estoque')?.close();
-    toast(result.mensagem || 'Troca concluída', 'success');
+    toast(result.mensagem || (modo === 'recap' ? 'Enviado à recapagem' : modo === 'descarte' ? 'Enviado ao descarte' : 'Troca concluída'), 'success');
     if (modoAcessoRapido) await recarregarAcessoRapido({ silent: true });
     else await openVeiculoDetalhe(veiculoAtual.id, voltarPara);
   } catch (err) {
@@ -2384,6 +2418,11 @@ async function salvarMedicaoTruck({ concluir = false } = {}) {
 
 async function registrarEventoPneu(tipo) {
   if (!pneuSelecionado || !veiculoAtual) return;
+  const montado = pneuSelecionado.status_pneu === 'montado' || pneuSelecionado.veiculo_id;
+  if (montado) {
+    await abrirModalTrocarEstoque(tipo);
+    return;
+  }
   const label = tipo === 'recap'
     ? 'envio à recapagem (sai do caminhão e fica em processo até voltar)'
     : 'descarte (envia ao estoque de descarte para definir o tratamento)';

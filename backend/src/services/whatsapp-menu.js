@@ -518,6 +518,38 @@ async function iniciarOpcao(ctx, n) {
 }
 
 async function passoEstoque(ctx, sessao, texto) {
+  const d = { ...(sessao.dados || {}) };
+
+  if (sessao.passo === 'substituto') {
+    if (await recusarFogoInvalido(ctx, texto)) return;
+    const sub = await ops.buscarPneuPorFogo(ctx.filialId, String(texto).replace(/^fogo\s+/i, '').trim());
+    if (!sub || sub.status_pneu !== 'estoque') {
+      await reply(ctx, 'Fogo não encontrado no *estoque*. Envie outro nº ou *0* (o pneu original permanece montado).');
+      return;
+    }
+    try {
+      await ops.validarSubstitutoEstoque({
+        filialId: ctx.filialId,
+        pneuEstoqueId: sub.id,
+        veiculoId: d.veiculo_id,
+        posicao: d.posicao,
+      });
+      const r = await ops.trocarPorEstoque({
+        filialId: ctx.filialId,
+        pneuMontadoId: d.pneu_id,
+        pneuEstoqueId: sub.id,
+      });
+      await clear(ctx);
+      await reply(
+        ctx,
+        `✅ ${r.mensagem || `Fogo *${d.fogo}* foi para o estoque.`}\nFogo *${sub.numero_fogo}* montado em *${d.placa}* (${d.posicao}).\n\n` + textoMenu()
+      );
+    } catch (err) {
+      await reply(ctx, `❌ ${err.message}\nEnvie outro nº de fogo ou *0* (original permanece montado).`);
+    }
+    return;
+  }
+
   if (await recusarFogoInvalido(ctx, texto)) return;
   const pneu = await ops.buscarPneuPorFogo(ctx.filialId, String(texto).replace(/^fogo\s+/i, '').trim());
   if (!pneu) {
@@ -534,12 +566,19 @@ async function passoEstoque(ctx, sessao, texto) {
     await reply(ctx, `Fogo *${pneu.numero_fogo}* está em *${pneu.status_pneu}* — não dá para enviar ao estoque assim.\n\n` + textoMenu());
     return;
   }
-  const r = await ops.desmontarPneu({ filialId: ctx.filialId, pneuId: pneu.id });
-  await pedirMontarEstoque(ctx, {
-    veiculoId: r.veiculo_id,
-    posicao: r.posicao,
-    placa: r.placa,
-    acaoLabel: `Fogo *${r.fogo}* foi para o estoque`,
+  await pedirSubstitutoObrigatorio(ctx, {
+    fluxo: 'estoque',
+    passo: 'substituto',
+    dados: {
+      pneu_id: pneu.id,
+      fogo: pneu.numero_fogo,
+      veiculo_id: pneu.veiculo_id,
+      posicao: pneu.posicao,
+      placa: pneu.placa,
+    },
+    titulo: `📦 Fogo *${pneu.numero_fogo}* será enviado ao estoque`,
+    placa: pneu.placa,
+    posicao: pneu.posicao,
   });
 }
 

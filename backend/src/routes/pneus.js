@@ -41,6 +41,8 @@ import {
 import {
   trocarPorEstoque,
   moverOuTrocarNaFrota,
+  registrarRecap,
+  registrarDescarte,
 } from '../services/whatsapp-ops.js';
 import {
   consultarProximoFogo,
@@ -1169,7 +1171,7 @@ router.post('/:id/reposicionar', async (req, res, next) => {
 
 /** Eventos especiais (recap/descarte/retorno) — rastreiam ciclo de vida do pneu */
 router.post('/:id/evento', async (req, res, next) => {
-  const { tipo, data_evento, km_veiculo, hr_veiculo, detalhes, sulco_mm } = req.body;
+  const { tipo, data_evento, km_veiculo, hr_veiculo, detalhes, sulco_mm, montar_pneu_id } = req.body;
   const tiposOk = ['recap', 'descarte', 'retorno_recap'];
   if (!tiposOk.includes(tipo)) {
     return res.status(400).json({
@@ -1182,9 +1184,9 @@ router.post('/:id/evento', async (req, res, next) => {
     if (!pneu) return res.status(404).json({ erro: 'Pneu não encontrado' });
 
     const db = getDb();
-    const limites = getLimites();
     const data = data_evento || new Date().toISOString().split('T')[0];
     const filialId = filialScopeId(req);
+    let eventoOps = null;
 
     if (tipo === 'retorno_recap') {
       if (pneu.status_pneu !== 'recapagem') {
@@ -1239,125 +1241,38 @@ router.post('/:id/evento', async (req, res, next) => {
         );
       });
     } else if (tipo === 'recap') {
-      if (pneu.status_pneu === 'recapagem') {
-        return res.status(400).json({ erro: 'Pneu já está em recapagem' });
-      }
-      if (pneu.status_pneu === 'descarte') {
-        return res.status(400).json({ erro: 'Pneu já está no descarte' });
-      }
-      const novaVida = (pneu.vida_recap || 0) + 1;
-      if (novaVida > limites.max_recaps) {
-        return res.status(400).json({
-          erro: `Limite de recaps atingido (${limites.max_recaps}). Indique troca/descarte.`,
-        });
-      }
-
-      let placaOrigem = null;
-      const veiculoOrigemId = pneu.veiculo_id || null;
-      const posicaoOrigem = pneu.posicao || null;
-      await db.transaction(async () => {
-        if (pneu.status_pneu === 'montado' && pneu.veiculo_id) {
-          const veiculo = await db.prepare('SELECT * FROM veiculos WHERE id = ?').get(pneu.veiculo_id);
-          placaOrigem = veiculo?.placa || null;
-          const km = km_veiculo != null ? parseInt(km_veiculo, 10) : (veiculo?.km_atual ?? null);
-          const hr = hr_veiculo != null ? parseFloat(hr_veiculo) : (veiculo?.hr_atual ?? null);
-          await registrarMovimentacao(db, {
-            pneuId: pneu.id,
-            veiculoId: pneu.veiculo_id,
-            tipo: 'retirada',
-            data,
-            km,
-            hr,
-            posicao: pneu.posicao,
-            detalhes: 'Retirou para iniciar processo de recap',
-            placa: placaOrigem,
-          });
-          await atualizarKmHrVeiculo(db, pneu.veiculo_id, filialId, km, hr);
-        }
-        await db.prepare(`
-          UPDATE pneus SET
-            vida_recap = ?,
-            condicao = 'recapado',
-            status_pneu = 'recapagem',
-            veiculo_id = NULL,
-            posicao = NULL,
-            data_instalacao = NULL,
-            km_instalacao = COALESCE(?, km_instalacao),
-            data_alerta_monitorar = NULL
-          WHERE id = ?
-        `).run(
-          novaVida,
-          km_veiculo != null ? parseInt(km_veiculo, 10) : null,
-          pneu.id
-        );
-        await registrarMovimentacao(db, {
-          pneuId: pneu.id,
-          veiculoId: veiculoOrigemId,
-          tipo: 'recap',
-          data,
-          km: km_veiculo != null ? parseInt(km_veiculo, 10) : null,
-          hr: hr_veiculo != null ? parseFloat(hr_veiculo) : null,
-          posicao: posicaoOrigem,
-          detalhes: detalhes || `Enviado à recap (${novaVida}ª vida)`,
-          placa: placaOrigem,
-        });
+      const substId = parseInt(montar_pneu_id, 10) || null;
+      eventoOps = await registrarRecap({
+        filialId,
+        pneuId: pneu.id,
+        pneuEstoqueId: substId || null,
       });
     } else if (tipo === 'descarte') {
-      await db.transaction(async () => {
-        if (pneu.status_pneu === 'montado' && pneu.veiculo_id) {
-          const veiculo = await db.prepare('SELECT * FROM veiculos WHERE id = ?').get(pneu.veiculo_id);
-          const km = km_veiculo != null ? parseInt(km_veiculo, 10) : (veiculo?.km_atual ?? null);
-          const hr = hr_veiculo != null ? parseFloat(hr_veiculo) : (veiculo?.hr_atual ?? null);
-          await registrarMovimentacao(db, {
-            pneuId: pneu.id,
-            veiculoId: pneu.veiculo_id,
-            tipo: 'retirada',
-            data,
-            km,
-            hr,
-            posicao: pneu.posicao,
-            detalhes: 'Retirou para descarte',
-            placa: veiculo?.placa || null,
-          });
-        }
-        await db.prepare(`
-          UPDATE pneus SET
-            status_pneu = 'descarte',
-            ativo = 0,
-            veiculo_id = NULL,
-            posicao = NULL,
-            data_alerta_monitorar = NULL,
-            tratamento_descarte = 'pendente',
-            tratamento_descarte_obs = NULL,
-            tratamento_descarte_em = ?,
-            observacoes = COALESCE(observacoes || ' | ', '') || ?
-          WHERE id = ?
-        `).run(data, `descarte em ${data}${detalhes ? ` — ${detalhes}` : ''}`, pneu.id);
-        await registrarMovimentacao(db, {
-          pneuId: pneu.id,
-          veiculoId: pneu.veiculo_id || null,
-          tipo: 'descarte',
-          data,
-          km: km_veiculo != null ? parseInt(km_veiculo, 10) : null,
-          hr: hr_veiculo != null ? parseFloat(hr_veiculo) : null,
-          posicao: pneu.posicao || null,
-          detalhes: detalhes || 'Enviado ao estoque de descarte',
-          placa: null,
-        });
+      const substId = parseInt(montar_pneu_id, 10) || null;
+      eventoOps = await registrarDescarte({
+        filialId,
+        pneuId: pneu.id,
+        motivo: detalhes || null,
+        pneuEstoqueId: substId || null,
       });
     }
 
     const atualizado = await db.prepare('SELECT * FROM pneus WHERE id = ?').get(pneu.id);
-
+    const subst = eventoOps?.substituto;
     res.status(201).json({
       mensagem: tipo === 'recap'
-        ? 'Pneu enviado à recapagem — acompanhe no KPI Recap / aba Pneus'
+        ? (subst
+          ? `Pneu enviado à recapagem — fogo ${subst.fogo} montado em ${subst.posicao}`
+          : 'Pneu enviado à recapagem — acompanhe no KPI Recap / aba Pneus')
         : tipo === 'retorno_recap'
           ? 'Recap concluído — pneu voltou ao estoque'
-          : 'Pneu enviado ao estoque de descarte — defina o tratamento na aba Pneus',
+          : (subst
+            ? `Pneu enviado ao descarte — fogo ${subst.fogo} montado em ${subst.posicao}`
+            : 'Pneu enviado ao estoque de descarte — defina o tratamento na aba Pneus'),
       pneu: enriquecerPneu(atualizado, await ultimaMedicaoDoPneu(db, pneu.id)),
     });
   } catch (err) {
+    if (err.status) return res.status(err.status).json({ erro: err.message });
     next(err);
   }
 });
