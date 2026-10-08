@@ -136,6 +136,15 @@ async function main() {
 
   const frota = await ops.listarFrota(filialId);
   log(!frota.some((v) => v.placa === 'ABC1D23'), 'Incompleto não entra na frota operacional');
+  const nOp = await db.prepare(`
+    SELECT COUNT(*) as n FROM veiculos
+    WHERE filial_id = ? AND ativo = 1 AND COALESCE(cadastro_completo, 1) = 1
+  `).get(filialId);
+  const nPend = await db.prepare(`
+    SELECT COUNT(*) as n FROM veiculos
+    WHERE filial_id = ? AND ativo = 1 AND COALESCE(cadastro_completo, 1) = 0
+  `).get(filialId);
+  log(Number(nPend.n) === 1 && Number(nOp.n) === 0, 'Indicadores: incompleto fora da conta operacional');
 
   const pEst = await ops.criarPneuEstoque(filialId, {
     numero_fogo: 'MATRIZ-10990001', modelo: 'X', tipo_pneu: 'misto', condicao: 'novo',
@@ -201,28 +210,138 @@ async function main() {
   }
   if (completouOutra) log(false, 'Conclusão web: outra filial não altera o veículo');
 
-  const done = await ops.completarVeiculo(filialId, veiculo.id, {
-    marca: 'Mercedes', modelo: 'Atego', tipo: 'Truck / Tração', layout_pneus: 'truck_10', km_atual: 1000,
+  const express = (await import('express')).default;
+  const authRouter = (await import(toFileUrl(path.join(BACKEND, 'src/routes/auth.js')))).default;
+  const arRouter = (await import(toFileUrl(path.join(BACKEND, 'src/routes/acesso-rapido.js')))).default;
+  const dashRouter = (await import(toFileUrl(path.join(BACKEND, 'src/routes/dashboard.js')))).default;
+  const veiculosRouter = (await import(toFileUrl(path.join(BACKEND, 'src/routes/veiculos.js')))).default;
+  const app = express();
+  app.use(express.json());
+  app.use('/api/auth', authRouter);
+  app.use('/api/acesso-rapido', arRouter);
+  app.use('/api/dashboard', dashRouter);
+  app.use('/api/veiculos', veiculosRouter);
+  const httpServer = await new Promise((resolve) => {
+    const s = app.listen(0, '127.0.0.1', () => resolve(s));
+  });
+  const api = `http://127.0.0.1:${httpServer.address().port}/api`;
+  async function http(metodo, caminho, { token, body } = {}) {
+    const res = await fetch(`${api}${caminho}`, {
+      method: metodo,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const texto = await res.text();
+    let dados = null;
+    try { dados = texto ? JSON.parse(texto) : null; } catch { dados = { raw: texto }; }
+    return { status: res.status, dados };
+  }
+
+  const login = await http('POST', '/auth/login', { body: { login: 'matriz', senha: 'matriz123' } });
+  const jwtTok = login.dados?.token;
+  log(login.status === 200 && !!jwtTok, 'HTTP login matriz');
+
+  const getAr = await http('GET', `/acesso-rapido?token=${encodeURIComponent(tokNovo)}`);
+  log(
+    getAr.status === 200
+      && getAr.dados?.pre_cadastro === true
+      && Number(getAr.dados?.veiculo?.cadastro_completo) === 0
+      && getAr.dados?.veiculo?.placa === 'ABC1D23',
+    'Formulário AR: GET carrega pré-cadastro do veículo'
+  );
+
+  const dashPend = await http('GET', '/dashboard/resumo', { token: jwtTok });
+  const vDashPend = (dashPend.dados?.veiculos || []).find((v) => v.placa === 'ABC1D23');
+  log(
+    dashPend.status === 200
+      && dashPend.dados?.veiculos_ativos === 0
+      && vDashPend?.cadastro_pendente === true
+      && vDashPend?.status_sulco === 'cadastro_pendente',
+    'Dashboard: incompleto como Cadastro pendente e fora dos ativos'
+  );
+
+  const listaPend = await http('GET', '/veiculos', { token: jwtTok });
+  const vListaPend = (listaPend.dados || []).find((v) => v.placa === 'ABC1D23');
+  log(
+    listaPend.status === 200
+      && vListaPend?.cadastro_pendente === true
+      && vListaPend?.status_sulco === 'cadastro_pendente',
+    'Lista veículos: incompleto identificado como Cadastro pendente'
+  );
+
+  const postIncompleto = await http('POST', '/acesso-rapido/veiculo', {
+    body: { token: tokNovo, marca: 'Mercedes', layout_pneus: 'truck_10' },
+  });
+  log(postIncompleto.status === 400, 'Formulário AR: conclusão sem modelo recusada');
+  log(
+    Number((await db.prepare(`SELECT cadastro_completo FROM veiculos WHERE id = ?`).get(veiculo.id)).cadastro_completo) === 0,
+    'Formulário AR: cancelar/recusar não conclui o cadastro'
+  );
+
+  const postVeic = await http('POST', '/acesso-rapido/veiculo', {
+    body: {
+      token: tokNovo,
+      marca: 'Mercedes',
+      modelo: 'Atego',
+      tipo: 'Truck / Tração',
+      layout_pneus: 'truck_10',
+      km_atual: 1000,
+    },
   });
   const veiculoOk = await db.prepare(`SELECT * FROM veiculos WHERE id = ?`).get(veiculo.id);
   log(
-    Number(veiculoOk.cadastro_completo) === 1
+    [200, 201].includes(postVeic.status)
+      && Number(veiculoOk.cadastro_completo) === 1
       && veiculoOk.modelo === 'Atego'
       && veiculoOk.marca === 'Mercedes'
-      && done.total_posicoes > 0,
-    'Conclusão web: veículo operacional'
+      && postVeic.dados?.total_posicoes > 0,
+    'Formulário AR: conclusão de cadastro do veículo'
   );
   const frota2 = await ops.listarFrota(filialId);
   log(frota2.some((v) => v.placa === 'ABC1D23'), 'Após concluir: aparece na frota');
+
+  const dashOk = await http('GET', '/dashboard/resumo', { token: jwtTok });
+  const vDashOk = (dashOk.dados?.veiculos || []).find((v) => v.placa === 'ABC1D23');
+  log(
+    dashOk.dados?.veiculos_ativos === 1
+      && vDashOk?.cadastro_pendente === false,
+    'Dashboard: após concluir entra nos indicadores operacionais'
+  );
 
   await ops.montarPneu({ filialId, pneuId: pEst.id, veiculoId: veiculo.id, posicao: '1E' });
   log((await db.prepare(`SELECT status_pneu FROM pneus WHERE id = ?`).get(pEst.id)).status_pneu === 'montado',
     'Após concluir: montagem permitida');
 
-  await ar.marcarTokenUsado((await db.prepare(`
-    SELECT id FROM tokens_acesso_rapido WHERE token = ?
-  `).get(tokNovo)).id);
   log((await ar.validarTokenAcessoRapido(tokNovo, ['cadastrar_veiculo'])) == null, 'Token usado não reabre o cadastro');
+
+  const subEst = await ops.criarPneuEstoque(filialId, {
+    numero_fogo: 'MATRIZ-10990002', modelo: 'Y', tipo_pneu: 'misto', condicao: 'novo',
+  });
+  const { token: tokTroca } = await ar.gerarTokenAcessoRapido({
+    tipo: 'troca', veiculoId: veiculo.id, filialId,
+  });
+  const trocaSem = await http('POST', '/acesso-rapido/troca', {
+    body: { token: tokTroca, retirar_pneu_id: pEst.id },
+  });
+  log(trocaSem.status === 400, 'Formulário AR: troca sem substituto recusada');
+  log(
+    (await db.prepare(`SELECT status_pneu FROM pneus WHERE id = ?`).get(pEst.id)).status_pneu === 'montado'
+      && (await db.prepare(`SELECT status_pneu FROM pneus WHERE id = ?`).get(subEst.id)).status_pneu === 'estoque',
+    'Formulário AR: cancelar troca não move pneus'
+  );
+
+  const trocaOk = await http('POST', '/acesso-rapido/troca', {
+    body: { token: tokTroca, retirar_pneu_id: pEst.id, montar_pneu_id: subEst.id },
+  });
+  log(
+    [200, 201].includes(trocaOk.status)
+      && (await db.prepare(`SELECT status_pneu FROM pneus WHERE id = ?`).get(pEst.id)).status_pneu === 'estoque'
+      && (await db.prepare(`SELECT status_pneu, posicao FROM pneus WHERE id = ?`).get(subEst.id)).status_pneu === 'montado',
+    'Formulário AR: confirmar substituição de pneu'
+  );
 
   const pneuPre = await falar('cadastrar pneu 10700050');
   await processarMensagemMenu({
@@ -236,10 +355,28 @@ async function main() {
   const est = await ops.listarEstoque(filialId, 50);
   log(!est.some((p) => p.id === pneuInc.id), 'Pneu incompleto fora do estoque operacional');
 
-  const pneuDone = await ops.completarPneu(filialId, pneuInc.id, {
-    marca: 'Michelin', modelo: 'X Multi D', tipo_pneu: 'misto', condicao: 'novo', sulco_inicial_mm: 14,
+  const tokPneuRow = await db.prepare(`
+    SELECT * FROM tokens_acesso_rapido
+    WHERE pneu_id = ? AND tipo = 'cadastrar_pneu'
+    ORDER BY id DESC LIMIT 1
+  `).get(pneuInc.id);
+  const postPneu = await http('POST', '/acesso-rapido/pneu', {
+    body: {
+      token: tokPneuRow.token,
+      marca: 'Michelin',
+      modelo: 'X Multi D',
+      tipo_pneu: 'misto',
+      condicao: 'novo',
+      sulco_inicial_mm: 14,
+    },
   });
-  log(Number(pneuDone.cadastro_completo) === 1 && pneuDone.modelo === 'X Multi D', 'Conclusão web do pneu');
+  const pneuDone = await db.prepare(`SELECT * FROM pneus WHERE id = ?`).get(pneuInc.id);
+  log(
+    [200, 201].includes(postPneu.status)
+      && Number(pneuDone.cadastro_completo) === 1
+      && pneuDone.modelo === 'X Multi D',
+    'Formulário AR: conclusão de cadastro do pneu'
+  );
 
   const d1 = await processarMensagemMenu({
     filialId, phone: '11980001111', destino: '11980001111', chatJid: '', texto: '1', mensagemId: 'same-id',
@@ -257,6 +394,9 @@ async function main() {
   const tipoAsk = await falar('cadastrar veículo ZZ9Z99');
   log(tipoAsk.sessao?.passo === 'tipo', 'Cadastrar veículo sem tipo pede o tipo');
 
+  await new Promise((resolve, reject) => {
+    httpServer.close((err) => (err ? reject(err) : resolve()));
+  });
   await closePool();
   try { await pglite.server?.stop?.(); } catch { /* ignore */ }
 

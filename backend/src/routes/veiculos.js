@@ -501,15 +501,21 @@ router.get('/', async (req, res, next) => {
     ORDER BY v.apelido, v.placa
   `).all(filialId);
 
-    const resultado = veiculos.map((v) => ({
-      ...v,
-      tipo: normalizarTipoVeiculo(v.tipo),
-      menor_sulco: v.menor_sulco === 999 ? null : v.menor_sulco,
-      status_sulco: classificarSulco(v.menor_sulco === 999 ? null : v.menor_sulco, limitesDoVeiculo(v)),
-      pneus_medidos: Number(v.pneus_medidos) || 0,
-      ultima_medicao: v.ultima_medicao || null,
-      dia_medicao: normalizarDiaMedicao(v.dia_medicao),
-    }));
+    const resultado = veiculos.map((v) => {
+      const cadastroPendente = Number(v.cadastro_completo ?? 1) !== 1;
+      return {
+        ...v,
+        tipo: normalizarTipoVeiculo(v.tipo),
+        cadastro_pendente: cadastroPendente,
+        menor_sulco: cadastroPendente ? null : (v.menor_sulco === 999 ? null : v.menor_sulco),
+        status_sulco: cadastroPendente
+          ? 'cadastro_pendente'
+          : classificarSulco(v.menor_sulco === 999 ? null : v.menor_sulco, limitesDoVeiculo(v)),
+        pneus_medidos: cadastroPendente ? 0 : (Number(v.pneus_medidos) || 0),
+        ultima_medicao: cadastroPendente ? null : (v.ultima_medicao || null),
+        dia_medicao: normalizarDiaMedicao(v.dia_medicao),
+      };
+    });
 
     res.json(resultado);
   } catch (err) {

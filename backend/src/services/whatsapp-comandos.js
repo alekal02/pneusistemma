@@ -136,18 +136,40 @@ export function pareceComandoNatural(texto) {
   return parseComandoNatural(texto) != null;
 }
 
-function parseValoresSulco(bruto) {
+function parseNumeroSulco(token) {
+  const t = String(token || '').trim();
+  if (!t) return NaN;
+  if (/^\d+,\d+$/.test(t)) return Number(t.replace(',', '.'));
+  if (/^\d+([.]\d+)?$/.test(t)) return Number(t);
+  return NaN;
+}
+
+/** Vírgula só é decimal com `;` `/` ou espaço: 14,5;14,5;14,5 ou 14,5 14,5 14,5. */
+export function parseValoresSulco(bruto) {
   const raw = String(bruto || '').trim();
   if (!raw) return [];
-  const partes = /;/.test(raw)
-    ? raw.split(';')
-    : /,/.test(raw)
-      ? raw.split(',')
-      : raw.split(/\s+/);
-  return partes
-    .map((p) => String(p).trim().replace(',', '.'))
-    .filter(Boolean)
-    .map((p) => Number(p));
+  if (/[;/]/.test(raw)) {
+    return raw.split(/[;/]/).map((p) => parseNumeroSulco(p));
+  }
+  if (/\s/.test(raw)) {
+    const nums = raw.split(/\s+/).map((p) => parseNumeroSulco(p));
+    if (nums.length >= 3 && nums.every(Number.isFinite)) return nums;
+  }
+  if (raw.includes('.')) {
+    return raw.split(',').map((p) => Number(String(p).trim()));
+  }
+  const partes = raw.split(',').map((p) => String(p).trim()).filter(Boolean);
+  if (partes.every((p) => /^\d+$/.test(p))) return partes.map(Number);
+  return partes.map((p) => parseNumeroSulco(p));
+}
+
+export function parseKmWhatsApp(texto) {
+  const lines = String(texto || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  for (const line of lines) {
+    const m = line.match(/^(?:km|quilometragem)\s*[:=]?\s*(\d{1,8})$/i);
+    if (m) return Number(m[1]);
+  }
+  return null;
 }
 
 /**
@@ -200,8 +222,14 @@ export function parseMedicaoWhatsApp(texto) {
   if (!lines.length) return null;
 
   let placa = null;
+  let km = null;
   const linhas = [];
   for (const line of lines) {
+    const kmLinha = parseKmWhatsApp(line);
+    if (kmLinha != null) {
+      km = kmLinha;
+      continue;
+    }
     const med = parseLinhaMedicao(line);
     if (med) {
       linhas.push(med);
@@ -212,7 +240,7 @@ export function parseMedicaoWhatsApp(texto) {
     }
   }
   if (!linhas.length) return null;
-  return { tipo: 'medir', placa, linhas };
+  return { tipo: 'medir', placa, linhas, km };
 }
 
 export function pareceMedicaoWhatsApp(texto) {

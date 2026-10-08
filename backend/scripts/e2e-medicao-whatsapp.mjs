@@ -7,6 +7,7 @@ import {
   parseComandoNatural,
   parseMedicaoWhatsApp,
   pareceMedicaoWhatsApp,
+  parseValoresSulco,
 } from '../src/services/whatsapp-comandos.js';
 
 const ROOT = 'C:/Projetos/pneusistemma';
@@ -60,6 +61,12 @@ async function main() {
   log(!pareceMedicaoWhatsApp('ABC1D23'), 'Parse: placa sozinha NÃO é medição');
   log(!pareceMedicaoWhatsApp('trocar 10700002 por 10700045'), 'Parse: troca NÃO é medição');
   log(parseMedicaoWhatsApp('9ZZ 14,14,14')?.linhas[0].erro === 'posicao_desconhecida', 'Parse: posição desconhecida');
+  log(parseValoresSulco('14.5,14.5,14.5').join() === '14.5,14.5,14.5', 'Parse: decimal com ponto');
+  log(parseValoresSulco('14,5;14,5;14,5').join() === '14.5,14.5,14.5', 'Parse: decimal BR com ponto-e-vírgula');
+  log(parseValoresSulco('14,5 14,5 14,5').join() === '14.5,14.5,14.5', 'Parse: decimal BR com espaço');
+  log(parseValoresSulco('14,14,14').join() === '14,14,14', 'Parse: inteiros com vírgula');
+  log(parseValoresSulco('14,5,14,5,14,5').length === 6, 'Parse: 14,5,14,5,14,5 é ambíguo (6 valores)');
+  log(parseMedicaoWhatsApp('ABC1D23\nKM 150000\n1E 14.5,14.5,14.5')?.km === 150000, 'Parse: KM opcional no lote');
 
   process.env.DATABASE_URL = `postgresql://postgres@127.0.0.1:${PG_PORT}/postgres`;
   process.env.DATABASE_SSL = 'false';
@@ -166,26 +173,41 @@ async function main() {
   log(Number(m1e2.sulco_externo) === 15, 'Separadas: 1E atualizado após confirmação');
   log(Number(m1d.sulco_auxiliar) === 13, 'Separadas: 1D com 4º valor');
 
+  const kmBaixo = await falar('ABC1D23\nKM 100\n1E 14,14,14');
+  log(Boolean(kmBaixo.sessao?.dados?.km_erro) && (await qtdMed(pneus['1E'].id)) === 2, 'KM menor que o atual recusado');
+
+  const kmOk = await falar('ABC1D23\nKM 150000\n1E 14.5,14.5,14.5');
+  log(kmOk.sessao?.passo === 'confirma' && kmOk.sessao.dados?.km_informado === 150000, 'KM 150000 aceito no resumo');
+  await processarMensagemMenu({
+    filialId, phone: kmOk.phone, destino: kmOk.phone, chatJid: '', texto: '1', mensagemId: `med-${(msgSeq += 1)}`,
+  });
+  const medKm = await db.prepare(`
+    SELECT sulco_externo, km_veiculo FROM medicoes WHERE pneu_id = ? ORDER BY id DESC LIMIT 1
+  `).get(pneus['1E'].id);
+  const kmVeic = await db.prepare(`SELECT km_atual FROM veiculos WHERE id = ?`).get(truck.id);
+  log(Number(medKm.sulco_externo) === 14.5 && Number(medKm.km_veiculo) === 150000, 'KM informado gravado na medição');
+  log(Number(kmVeic.km_atual) === 150000, 'KM do veículo atualizado');
+
   const inv = await falar('ABC1D23\n1E 16,16,16\n9ZZ 14,14,14');
   log(
     inv.sessao?.passo === 'coletar'
       && inv.sessao.dados?.ok?.some((i) => i.posicao === '1E')
       && inv.sessao.dados?.erros?.some((e) => e.posicao === '9ZZ')
-      && (await qtdMed(pneus['1E'].id)) === 2,
+      && (await qtdMed(pneus['1E'].id)) === 3,
     'Posição inválida: pede correção e mantém 1E válido (sem gravar)'
   );
 
   const vazio = await falar('ABC1D23\n3EE 14,14,14');
   log(
     vazio.sessao?.dados?.erros?.some((e) => /montado/i.test(e.motivo))
-      && (await qtdMed(pneus['1E'].id)) === 2,
+      && (await qtdMed(pneus['1E'].id)) === 3,
     'Pneu não montado: recusa 3EE'
   );
 
   const outraFilial = await falar(LOTE, { filial: outra.id });
   log(
     outraFilial.r.handled === true
-      && (await qtdMed(pneus['1E'].id)) === 2
+      && (await qtdMed(pneus['1E'].id)) === 3
       && !outraFilial.sessao?.dados?.ok?.length,
     'Outra filial: não mede nem grava o veículo da MATRIZ'
   );

@@ -655,6 +655,7 @@ h3 {
 .badge-alerta { background: #ffedd5; color: #9a3412; }
 .badge-critico { background: #fee2e2; color: #991b1b; }
 .badge-sem_dado { background: #e2e8f0; color: #475569; }
+.badge-cadastro_pendente { background: #fef9c3; color: #854d0e; }
 .badge-vida { background: var(--primary-soft); color: var(--brand-dark); }
 
 /* Pneu grid no detalhe do veÃ­culo */

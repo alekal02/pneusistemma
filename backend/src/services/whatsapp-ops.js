@@ -1026,6 +1026,19 @@ function formatarValoresSulco(valores) {
   return (valores || []).map((n) => String(n)).join('/');
 }
 
+export function validarKmInformado(km, kmAtual) {
+  if (km == null || km === '') return null;
+  const n = Number(km);
+  if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n) || n > 9999999) {
+    return 'KM inválido';
+  }
+  const atual = Number(kmAtual);
+  if (Number.isFinite(atual) && n < atual) {
+    return `KM ${n} é menor que o atual (${atual})`;
+  }
+  return null;
+}
+
 export function validarValoresSulco(valores) {
   if (!Array.isArray(valores) || (valores.length !== 3 && valores.length !== 4)) {
     return 'Informe 3 ou 4 valores de sulco (ex.: 14,14,14)';
@@ -1233,7 +1246,7 @@ async function registrarUmaMedicao(db, {
 }
 
 export async function registrarMedicoesWhatsApp({
-  filialId, veiculoId, itens, responsavel,
+  filialId, veiculoId, itens, responsavel, kmInformado = null,
 }) {
   const db = getDb();
   const veiculo = await db.prepare(`
@@ -1242,6 +1255,9 @@ export async function registrarMedicoesWhatsApp({
   if (!veiculo) throw erroOps('Veículo não encontrado nesta unidade', 404);
   assertVeiculoOperacional(veiculo);
   if (!itens?.length) throw erroOps('Nenhuma medição para salvar', 400);
+  const errKm = validarKmInformado(kmInformado, veiculo.km_atual);
+  if (errKm) throw erroOps(errKm, 400);
+  const kmUso = kmInformado != null ? Number(kmInformado) : (veiculo.km_atual ?? null);
 
   const data = hojeIso();
   const agora = new Date();
@@ -1251,6 +1267,13 @@ export async function registrarMedicoesWhatsApp({
 
   await db.transaction(async () => {
     falharTxSeTeste();
+    if (kmInformado != null) {
+      await db.prepare(`
+        UPDATE veiculos SET km_atual = MAX(km_atual, ?), updated_at = NOW()
+        WHERE id = ? AND filial_id = ?
+      `).run(kmUso, veiculoId, filialId);
+      veiculo.km_atual = kmUso;
+    }
     for (const item of itens) {
       const pneu = await db.prepare(`
         SELECT * FROM pneus WHERE id = ? AND filial_id = ? AND ativo = 1
@@ -1270,7 +1293,7 @@ export async function registrarMedicoesWhatsApp({
         pontos,
         filialId,
         data,
-        km: veiculo.km_atual,
+        km: kmUso,
         hr: veiculo.hr_atual,
         responsavel: resp,
       });
@@ -1311,25 +1334,25 @@ export async function registrarMedicoesWhatsApp({
     placa: veiculo.placa,
     data,
     hora,
+    km: kmUso,
     responsavel: resp,
     total: gravados.length,
     itens: gravados,
   };
 }
 
-export function textoResumoMedicaoWa(placa, itens) {
-  const labelStatus = { ok: 'OK', alerta: 'Monitorar', critico: 'Crítico', sem_dado: 'Sem dado' };
+export function textoResumoMedicaoWa(placa, itens, { kmAtual = null, kmInformado = null } = {}) {
+  const labelStatus = { ok: 'OK', alerta: 'Alerta', critico: 'Crítico', sem_dado: '-' };
+  const kmTxt = kmInformado != null ? kmInformado : kmAtual;
   const linhas = [
-    `📏 *Resumo — ${placa}*`,
-    '',
+    `📏 *${placa}*${kmTxt != null ? ` · KM ${kmTxt}` : ''}`,
     ...itens.map((i) => {
       const vals = formatarValoresSulco(i.valores);
       const st = labelStatus[i.status_sulco] || i.status_sulco;
-      const fogo = i.numero_fogo ? ` (fogo ${i.numero_fogo})` : '';
-      return `• *${i.posicao}*${fogo}: ${vals} mm — ${st}`;
+      return `• ${i.posicao}: ${vals} — ${st}`;
     }),
     '',
-    '*1* confirma e salva · *0* cancela',
+    '*1* salva · *0* cancela',
   ];
   return linhas.join('\n');
 }

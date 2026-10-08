@@ -258,12 +258,17 @@ function toast(msg, type = '') {
   setTimeout(() => el.classList.add('hidden'), 3500);
 }
 
+function ehCadastroPendente(v) {
+  return v != null && (v.cadastro_pendente === true || Number(v.cadastro_completo ?? 1) !== 1);
+}
+
 function badge(status) {
   const labels = {
     ok: 'OK',
     alerta: 'Monitorar',
     critico: 'Crítico',
     sem_dado: 'Sem medição',
+    cadastro_pendente: 'Cadastro pendente',
   };
   return `<span class="badge badge-${status}">${labels[status] || status}</span>`;
 }
@@ -784,13 +789,16 @@ function renderCardCaminhaoFrota(v, { pendente = false, atrasado = false, eHoje 
     posicoes,
     pneus: v.pneus || [],
   });
-  const statusSemana = !pendente
-    ? '<span class="badge badge-ok">Nesta semana</span>'
-    : (atrasado
-      ? '<span class="badge badge-critico">Atrasado</span>'
-      : (eHoje
-        ? '<span class="badge badge-alerta">Medir hoje</span>'
-        : '<span class="badge badge-sem_dado">Pendente</span>'));
+  const cadastroPendente = ehCadastroPendente(v);
+  const statusSemana = cadastroPendente
+    ? '<span class="badge badge-cadastro_pendente">Cadastro pendente</span>'
+    : (!pendente
+      ? '<span class="badge badge-ok">Nesta semana</span>'
+      : (atrasado
+        ? '<span class="badge badge-critico">Atrasado</span>'
+        : (eHoje
+          ? '<span class="badge badge-alerta">Medir hoje</span>'
+          : '<span class="badge badge-sem_dado">Pendente</span>')));
   return `
     <article class="veiculo-card veiculo-item frota-truck-card${pendente ? ' veiculo-card-pendente' : ''}${atrasado ? ' veiculo-card-atrasado' : ''}"
              data-id="${v.id}"
@@ -806,11 +814,11 @@ function renderCardCaminhaoFrota(v, { pendente = false, atrasado = false, eHoje 
         <p>${escapeHtml(v.placa)}${v.tipo ? ` · ${escapeHtml(normalizarTipoLabel(v.tipo))}` : ''}</p>
         <p class="dash-medicao-data">${escapeHtml(diaTxt)}${diaTxt && dataMed ? ' · ' : ''}${escapeHtml(dataMed)}${posTxt ? ` · ${escapeHtml(posTxt)}` : ''}</p>
         <div class="frota-truck-badges">
-          ${v.menor_sulco != null ? `<strong>${v.menor_sulco} mm</strong>` : ''}
-          ${badge(v.status_sulco)}
+          ${!cadastroPendente && v.menor_sulco != null ? `<strong>${v.menor_sulco} mm</strong>` : ''}
+          ${cadastroPendente ? '' : badge(v.status_sulco)}
           ${statusSemana}
         </div>
-        ${mostrarMedir ? `<button type="button" class="btn btn-sm btn-primary btn-dash-medir" data-id="${v.id}">Medir</button>` : ''}
+        ${mostrarMedir && !cadastroPendente ? `<button type="button" class="btn btn-sm btn-primary btn-dash-medir" data-id="${v.id}">Medir</button>` : ''}
       </div>
     </article>
   `;
@@ -883,10 +891,12 @@ async function loadDashboard() {
     };
     const diaDoVeiculo = (v) => Number(v.dia_medicao) || diaUnidade || null;
     const naSemana = (v) => medidoNestaSemana(v.ultima_medicao, semana);
-    const medidos = veiculos
+    const cadastroPendentes = veiculos.filter((v) => ehCadastroPendente(v));
+    const operacionais = veiculos.filter((v) => !ehCadastroPendente(v));
+    const medidos = operacionais
       .filter((v) => naSemana(v))
       .sort((a, b) => tsAtualizacao(b) - tsAtualizacao(a));
-    const pendentes = veiculos
+    const pendentes = operacionais
       .filter((v) => !naSemana(v))
       .sort((a, b) => {
         const atrasoA = diaDoVeiculo(a) && semana.isoDia > diaDoVeiculo(a) ? 0 : 1;
@@ -925,9 +935,10 @@ async function loadDashboard() {
     };
 
     lista.innerHTML = `
+      ${cadastroPendentes.length ? `<section class="dash-frota-sec"><h3>Cadastro pendente <span>${cadastroPendentes.length}</span></h3><div class="frota-grid-inner">${cadastroPendentes.map((v) => renderCard(v, true)).join('')}</div></section>` : ''}
       ${pendentes.length ? `<section class="dash-frota-sec"><h3>Pendentes <span>${pendentes.length}</span></h3><div class="frota-grid-inner">${pendentes.map((v) => renderCard(v, true)).join('')}</div></section>` : ''}
       ${medidos.length ? `<section class="dash-frota-sec"><h3>Medidos nesta semana <span>${medidos.length}</span></h3><div class="frota-grid-inner">${medidos.map((v) => renderCard(v, false)).join('')}</div></section>` : ''}
-      ${!pendentes.length && !medidos.length ? '<div class="empty-state"><h3>Nenhum veículo</h3></div>' : ''}
+      ${!pendentes.length && !medidos.length && !cadastroPendentes.length ? '<div class="empty-state"><h3>Nenhum veículo</h3></div>' : ''}
     `;
     const logEl = document.getElementById('dashboard-log');
     if (logEl) logEl.innerHTML = renderLogMedicoes(resumo.logs_medicao || []);
@@ -1022,11 +1033,11 @@ async function loadVeiculos() {
       <div class="veiculo-card" data-id="${v.id}" ${attrsBuscaVeiculo(v)}>
         <div class="veiculo-info">
           <h4>${escapeHtml(v.apelido || v.placa)}</h4>
-          <p>${escapeHtml(v.placa)} · ${escapeHtml(normalizarTipoLabel(v.tipo) || v.tipo || '')} · ${v.total_pneus} pneus · ${v.km_atual?.toLocaleString('pt-BR') || 0} km</p>
+          <p>${escapeHtml(v.placa)} · ${escapeHtml(normalizarTipoLabel(v.tipo) || v.tipo || '')} · ${ehCadastroPendente(v) ? 'cadastro pendente' : `${v.total_pneus} pneus · ${v.km_atual?.toLocaleString('pt-BR') || 0} km`}</p>
         </div>
         <div class="veiculo-meta">
           ${badge(v.status_sulco)}
-          <button class="btn btn-sm btn-primary btn-medir" data-id="${v.id}">Medir</button>
+          ${ehCadastroPendente(v) ? '' : `<button class="btn btn-sm btn-primary btn-medir" data-id="${v.id}">Medir</button>`}
         </div>
       </div>
     `).join('');

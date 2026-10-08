@@ -38,14 +38,15 @@ function assertFilialNoEscopo(req, filialId) {
 
 async function resumoFilial(db, filialId, limites) {
   const veiculos = Number((await db.prepare(`
-    SELECT COUNT(*) as total FROM veiculos WHERE filial_id = ? AND ativo = 1
+    SELECT COUNT(*) as total FROM veiculos
+    WHERE filial_id = ? AND ativo = 1 AND COALESCE(cadastro_completo, 1) = 1
   `).get(filialId)).total);
 
   const counts = await db.prepare(`
     SELECT
       COUNT(*) FILTER (WHERE ativo = 1 AND status_pneu = 'recapagem') as em_recapagem,
       COUNT(*) FILTER (WHERE status_pneu = 'descarte') as em_descarte,
-      COUNT(*) FILTER (WHERE ativo = 1 AND status_pneu = 'estoque') as em_estoque
+      COUNT(*) FILTER (WHERE ativo = 1 AND status_pneu = 'estoque' AND COALESCE(cadastro_completo, 1) = 1) as em_estoque
     FROM pneus
     WHERE filial_id = ?
   `).get(filialId);
@@ -61,6 +62,7 @@ async function resumoFilial(db, filialId, limites) {
       um.data_medicao
     FROM pneus p
     JOIN veiculos v ON v.id = p.veiculo_id AND v.ativo = 1 AND v.filial_id = ?
+      AND COALESCE(v.cadastro_completo, 1) = 1
     ${SQL_LATERAL_ULTIMA_MEDICAO}
     WHERE p.ativo = 1 AND p.status_pneu = 'montado'
   `).all(filialId);
@@ -193,6 +195,7 @@ async function pendenciasFilial(db, filialId, limites) {
       um.data_medicao, um.diagnostico, um.km_veiculo
     FROM pneus p
     JOIN veiculos v ON v.id = p.veiculo_id AND v.ativo = 1 AND v.filial_id = ?
+      AND COALESCE(v.cadastro_completo, 1) = 1
     ${SQL_LATERAL_ULTIMA_MEDICAO}
     WHERE p.ativo = 1 AND p.status_pneu = 'montado'
   `).all(filialId);

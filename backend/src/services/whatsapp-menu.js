@@ -18,7 +18,7 @@ import {
   enviarERegistrar,
   enviarDocumentoERegistrar,
 } from './whatsapp.js';
-import { parseComandoNatural, parseMedicaoWhatsApp } from './whatsapp-comandos.js';
+import { parseComandoNatural, parseMedicaoWhatsApp, parseKmWhatsApp } from './whatsapp-comandos.js';
 import { TIPOS_VEICULO } from '../config.js';
 
 export function textoMenu() {
@@ -219,9 +219,8 @@ export async function montarMensagemMedicao(veiculo, phone, destinoEnvio, filial
   if (criticos > 0) mensagem += `🚨 *${criticos} pneu(s) em estado CRÍTICO*\n`;
   if (alertas > 0) mensagem += `⚠️ *${alertas} pneu(s) em ALERTA*\n`;
   if (criticos === 0 && alertas === 0) mensagem += `✅ Todos os pneus estão OK\n`;
-  mensagem += `\n👉 *Abrir medição de sulcos:*\n${link}\n\n`;
-  mensagem += `Meça todas as posições e salve.\n`;
-  mensagem += `_Link válido por 24 horas._\n\n_Digite *menu* para outras opções._`;
+  mensagem += `\n👉 Link (24h):\n${link}\n`;
+  mensagem += `Ou envie no Zap: *1E 14,14,14* (KM opcional: *KM 150000*).`;
   return mensagem;
 }
 
@@ -262,14 +261,10 @@ function mesclarLinhasMedicao(atual, novas) {
 
 function textoErrosMedicao(ok, erros) {
   const linhas = [];
-  if (ok.length) {
-    linhas.push(`✅ Mantidas: ${ok.map((i) => i.posicao).join(', ')}`);
-  }
-  linhas.push('❌ Corrija e reenvie só estas:');
-  for (const e of erros) {
-    linhas.push(`• *${e.posicao}* — ${e.motivo}`);
-  }
-  linhas.push('_0 = cancelar_');
+  if (ok.length) linhas.push(`OK: ${ok.map((i) => i.posicao).join(', ')}`);
+  linhas.push('Corrija:');
+  for (const e of erros) linhas.push(`• ${e.posicao} — ${e.motivo}`);
+  linhas.push('*0* cancela');
   return linhas.join('\n');
 }
 
@@ -280,13 +275,20 @@ async function resolverPlacaMedicao(ctx, placaTexto) {
     return null;
   }
   if (!r.ok) {
-    await reply(ctx, `❌ Placa *${r.placa || placaTexto}* não encontrada nesta unidade.\nDigite *9* para frota ou *menu*.`);
+    await reply(ctx, `Placa *${r.placa || placaTexto}* não está nesta unidade.`);
     return null;
   }
   return r.veiculo;
 }
 
-async function aplicarLinhasMedicao(ctx, sessaoDados, linhas) {
+function aplicarKmSessao(dados, km, kmAtual) {
+  if (km == null) return { ...dados, km_erro: null };
+  const err = ops.validarKmInformado(km, kmAtual);
+  if (err) return { ...dados, km_erro: err };
+  return { ...dados, km_informado: km, km_erro: null };
+}
+
+async function aplicarLinhasMedicao(ctx, sessaoDados, linhas, kmNovo = undefined) {
   const veiculoId = sessaoDados.veiculo_id;
   const mescladas = mesclarLinhasMedicao(sessaoDados.linhas, linhas);
   const { veiculo, ok, erros } = await ops.validarMedicoesWhatsApp({
@@ -294,13 +296,21 @@ async function aplicarLinhasMedicao(ctx, sessaoDados, linhas) {
     veiculoId,
     linhas: mescladas,
   });
-  const dados = {
+  let dados = {
     veiculo_id: veiculo.id,
     placa: veiculo.placa,
+    km_atual: veiculo.km_atual,
+    km_informado: sessaoDados.km_informado,
     linhas: ok.map((i) => ({ posicao: i.posicao, valores: i.valores })),
     ok,
     erros,
   };
+  if (kmNovo !== undefined) dados = aplicarKmSessao(dados, kmNovo, veiculo.km_atual);
+  if (dados.km_erro) {
+    await setFluxo(ctx, 'medir_wa', erros.length ? 'coletar' : (ok.length ? 'confirma' : 'coletar'), dados);
+    await reply(ctx, `❌ ${dados.km_erro}. KM atual: ${veiculo.km_atual ?? 0}.`);
+    return;
+  }
   if (erros.length) {
     await setFluxo(ctx, 'medir_wa', 'coletar', dados);
     await reply(ctx, textoErrosMedicao(ok, erros));
@@ -308,11 +318,14 @@ async function aplicarLinhasMedicao(ctx, sessaoDados, linhas) {
   }
   if (!ok.length) {
     await setFluxo(ctx, 'medir_wa', 'coletar', dados);
-    await reply(ctx, 'Envie as medições no formato:\n*1E 14,14,14*\n_0 = cancelar_');
+    await reply(ctx, 'Envie: *1E 14,14,14* (ou *14,5;14,5;14,5*).\n*0* cancela');
     return;
   }
   await setFluxo(ctx, 'medir_wa', 'confirma', dados);
-  await reply(ctx, ops.textoResumoMedicaoWa(veiculo.placa, ok));
+  await reply(ctx, ops.textoResumoMedicaoWa(veiculo.placa, ok, {
+    kmAtual: veiculo.km_atual,
+    kmInformado: dados.km_informado,
+  }));
 }
 
 async function iniciarMedicaoWhatsApp(ctx, med) {
@@ -330,16 +343,17 @@ async function iniciarMedicaoWhatsApp(ctx, med) {
     placa = veiculo.placa;
   }
   if (!veiculoId) {
-    await setFluxo(ctx, 'medir_wa', 'placa', { linhas: med.linhas || [] });
-    await reply(ctx, '📏 Envie a *placa* do veículo para estas medições.\n_0 = cancelar_');
+    await setFluxo(ctx, 'medir_wa', 'placa', { linhas: med.linhas || [], km_informado: med.km });
+    await reply(ctx, 'Envie a *placa* do caminhão.\n*0* cancela');
     return;
   }
-  await aplicarLinhasMedicao(ctx, { veiculo_id: veiculoId, placa, linhas: [] }, med.linhas || []);
+  await aplicarLinhasMedicao(ctx, { veiculo_id: veiculoId, placa, linhas: [], km_informado: med.km }, med.linhas || [], med.km);
 }
 
 async function passoMedicaoWhatsApp(ctx, sessao, texto) {
   const d = sessao.dados || {};
   const med = parseMedicaoWhatsApp(texto);
+  const kmSo = parseKmWhatsApp(texto);
 
   if (sessao.passo === 'placa') {
     if (med?.placa || parecePlacaOperacional(texto) || parecePlacaBrasil(texto)) {
@@ -347,10 +361,15 @@ async function passoMedicaoWhatsApp(ctx, sessao, texto) {
       const veiculo = await resolverPlacaMedicao(ctx, placaTxt);
       if (!veiculo) return;
       const linhas = mesclarLinhasMedicao(d.linhas, med?.linhas || []);
-      await aplicarLinhasMedicao(ctx, { veiculo_id: veiculo.id, placa: veiculo.placa, linhas: [] }, linhas);
+      await aplicarLinhasMedicao(
+        ctx,
+        { veiculo_id: veiculo.id, placa: veiculo.placa, linhas: [], km_informado: d.km_informado },
+        linhas,
+        med?.km ?? d.km_informado,
+      );
       return;
     }
-    await reply(ctx, 'Envie a *placa* (ex.: ABC1D23) ou *0* para cancelar.');
+    await reply(ctx, 'Envie a placa (ex.: ABC1D23).\n*0* cancela');
     return;
   }
 
@@ -361,7 +380,12 @@ async function passoMedicaoWhatsApp(ctx, sessao, texto) {
       d.veiculo_id = veiculo.id;
       d.placa = veiculo.placa;
     }
-    await aplicarLinhasMedicao(ctx, d, med.linhas);
+    await aplicarLinhasMedicao(ctx, d, med.linhas, med.km);
+    return;
+  }
+
+  if (kmSo != null && !med?.linhas?.length) {
+    await aplicarLinhasMedicao(ctx, d, [], kmSo);
     return;
   }
 
@@ -369,11 +393,11 @@ async function passoMedicaoWhatsApp(ctx, sessao, texto) {
     const sn = simNao(texto);
     if (sn === false) {
       await clear(ctx);
-      await reply(ctx, 'Cancelado. Nada foi alterado.');
+      await reply(ctx, 'Cancelado.');
       return;
     }
     if (sn !== true) {
-      await reply(ctx, 'Envie mais posições, ou *1* para salvar · *0* cancela');
+      await reply(ctx, 'Mais posições, *KM 123456*, *1* salva ou *0* cancela.');
       return;
     }
     if (d.erros?.length) {
@@ -381,7 +405,11 @@ async function passoMedicaoWhatsApp(ctx, sessao, texto) {
       return;
     }
     if (!d.ok?.length) {
-      await reply(ctx, 'Nenhuma medição válida. Envie as linhas (ex.: *1E 14,14,14*).');
+      await reply(ctx, 'Envie as medições: *1E 14,14,14*');
+      return;
+    }
+    if (d.km_erro) {
+      await reply(ctx, `❌ ${d.km_erro}`);
       return;
     }
     try {
@@ -389,10 +417,12 @@ async function passoMedicaoWhatsApp(ctx, sessao, texto) {
         filialId: ctx.filialId,
         veiculoId: d.veiculo_id,
         itens: d.ok,
+        kmInformado: d.km_informado,
         responsavel: `WhatsApp ${ctx.phone || ctx.destino || ''}`.trim(),
       });
       await clear(ctx);
-      await reply(ctx, `✅ *${r.total}* medição(ões) salva(s) em *${r.placa}*.\n${r.data} ${r.hora}\n_Digite *menu*._`);
+      const kmTxt = r.km != null ? ` · KM ${r.km}` : '';
+      await reply(ctx, `✅ ${r.total} medições em *${r.placa}*${kmTxt}.`);
     } catch (err) {
       await reply(ctx, `❌ ${err.message}\n*1* tenta de novo · *0* cancela`);
     }
@@ -402,10 +432,12 @@ async function passoMedicaoWhatsApp(ctx, sessao, texto) {
   if (sessao.passo === 'coletar') {
     if (simNao(texto) === true && d.ok?.length && !d.erros?.length) {
       await setFluxo(ctx, 'medir_wa', 'confirma', d);
-      await reply(ctx, ops.textoResumoMedicaoWa(d.placa, d.ok));
+      await reply(ctx, ops.textoResumoMedicaoWa(d.placa, d.ok, {
+        kmAtual: d.km_atual, kmInformado: d.km_informado,
+      }));
       return;
     }
-    await reply(ctx, 'Envie as medições no formato *1E 14,14,14* (3 ou 4 valores).\n_0 = cancelar_');
+    await reply(ctx, 'Envie *1E 14,14,14* ou *14,5;14,5;14,5*.\n*0* cancela');
   }
 }
 
@@ -844,7 +876,7 @@ async function iniciarOpcao(ctx, n) {
   switch (n) {
     case '1':
       await setFluxo(ctx, 'medir', 'placa', {});
-      await reply(ctx, '📏 *Medir pneu*\n\nEnvie a *placa* do caminhão (ex.: BH123).\n_0 = cancelar_');
+      await reply(ctx, '📏 Envie a *placa* (ou as medições: *1E 14,14,14*).\n*0* cancela');
       return;
     case '2':
       await clear(ctx);

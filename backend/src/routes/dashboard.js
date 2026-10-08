@@ -95,6 +95,7 @@ router.get('/resumo', async (req, res, next) => {
           um.data_medicao, um.created_at as medicao_created
         FROM pneus p
         JOIN veiculos v ON v.id = p.veiculo_id AND v.ativo = 1 AND v.filial_id = ?
+          AND COALESCE(v.cadastro_completo, 1) = 1
         ${SQL_LATERAL_ULTIMA_MEDICAO}
         WHERE p.ativo = 1 AND p.status_pneu = 'montado'
       `).all(filialId),
@@ -185,31 +186,41 @@ router.get('/resumo', async (req, res, next) => {
     const logsMedicao = await logsMedicaoFilial(db, filialId);
     const veiculos = veiculosRows.map((v) => {
       const tipo = normalizarTipoVeiculo(v.tipo);
-      const a = porVeiculo.get(Number(v.id)) || {
-        total_pneus: 0,
-        pneus_medidos: 0,
-        menor_sulco: null,
-        ultima_medicao: null,
-        ultima_atualizacao: null,
-      };
+      const cadastroPendente = Number(v.cadastro_completo ?? 1) !== 1;
+      const a = cadastroPendente
+        ? {
+          total_pneus: 0,
+          pneus_medidos: 0,
+          menor_sulco: null,
+          ultima_medicao: null,
+          ultima_atualizacao: null,
+        }
+        : (porVeiculo.get(Number(v.id)) || {
+          total_pneus: 0,
+          pneus_medidos: 0,
+          menor_sulco: null,
+          ultima_medicao: null,
+          ultima_atualizacao: null,
+        });
       return {
         ...v,
         tipo,
+        cadastro_pendente: cadastroPendente,
         total_pneus: a.total_pneus,
         pneus_medidos: a.pneus_medidos,
         menor_sulco: a.menor_sulco,
-        status_sulco: classificarSulco(a.menor_sulco, limitesDoVeiculo({ ...v, tipo })),
+        status_sulco: cadastroPendente ? 'cadastro_pendente' : classificarSulco(a.menor_sulco, limitesDoVeiculo({ ...v, tipo })),
         ultima_medicao: a.ultima_medicao,
         ultima_atualizacao: a.ultima_atualizacao,
         dia_medicao: normalizarDiaMedicao(v.dia_medicao),
-        pneus: pneusMap.get(Number(v.id)) || [],
+        pneus: cadastroPendente ? [] : (pneusMap.get(Number(v.id)) || []),
       };
     });
 
     const semana = semanaMedicaoBrasil();
 
     res.json({
-      veiculos_ativos: veiculos.length,
+      veiculos_ativos: veiculos.filter((v) => !v.cadastro_pendente).length,
       pneus_total: pneus.length,
       pneus_ok: ok,
       pneus_alerta: alerta,
