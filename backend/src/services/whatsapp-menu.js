@@ -20,6 +20,7 @@ import {
 } from './whatsapp.js';
 import { parseComandoNatural, parseMedicaoWhatsApp, parseKmWhatsApp } from './whatsapp-comandos.js';
 import { TIPOS_VEICULO } from '../config.js';
+import { listarTiposEquipamento, resolverTipoEquipamento } from '../equipamento-tipos.js';
 
 export function textoMenu() {
   return [
@@ -817,31 +818,63 @@ async function passoMontarPos(ctx, sessao, texto) {
   }
 }
 
-function textoTiposRelatorio() {
+const MARCA_OPCAO = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣'];
+
+/** Grupo antigo do menu. Não inclui código nem rótulo do catálogo. */
+const GRUPOS_RELATORIO_ANTIGOS = new Set([
+  'caminhoes',
+  'compactadores',
+  'caminhao/compactador',
+  'caminhao compactador',
+  'caminhao_compactador',
+]);
+
+export function opcoesMenuRelatorio() {
+  return [
+    { id: 'todos', label: 'Todos' },
+    ...listarTiposEquipamento().map((t) => ({ id: t.codigo, label: t.label })),
+  ];
+}
+
+export function textoTiposRelatorio() {
+  const linhas = opcoesMenuRelatorio().map((o, i) => {
+    const n = i + 1;
+    const marca = MARCA_OPCAO[i] || `*${n}*`;
+    return `${marca} ${o.label}`;
+  });
   return [
     '📊 *Relatório semanal*',
     '',
     'Qual tipo de equipamento?',
-    '1️⃣ Todos',
-    '2️⃣ Caminhão/Compactador',
-    '3️⃣ Trator',
-    '4️⃣ Mini carregadeira',
-    '5️⃣ Giro zero',
+    ...linhas,
     '',
     '_0️⃣ cancela_',
   ].join('\n');
 }
 
-function tipoRelatorioDaResposta(texto) {
+function numeroOpcaoRelatorio(texto) {
+  const m = String(texto || '').trim().match(/^(\d{1,2})$/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return n >= 1 ? n : null;
+}
+
+export function tipoRelatorioDaResposta(texto) {
   const c = norm(texto);
-  const n = soNumero(texto);
-  const porNumero = { 1: 'todos', 2: 'caminhao_compactador', 3: 'trator', 4: 'mini_carregadeira', 5: 'giro_zero' };
-  if (n && porNumero[n]) return porNumero[n];
-  if (/^todos?$/.test(c)) return 'todos';
-  if (/caminh|compact/.test(c)) return 'caminhao_compactador';
-  if (/trator/.test(c)) return 'trator';
-  if (/mini|skid|carregadeira/.test(c)) return 'mini_carregadeira';
-  if (/giro/.test(c)) return 'giro_zero';
+  const n = numeroOpcaoRelatorio(texto);
+  const opcoes = opcoesMenuRelatorio();
+  if (n) {
+    if (n <= opcoes.length) return opcoes[n - 1].id;
+    return null;
+  }
+  if (!c) return null;
+  if (/^todos?$|^todas$/.test(c)) return 'todos';
+  if (GRUPOS_RELATORIO_ANTIGOS.has(c)) return 'caminhao_compactador';
+  const cat = resolverTipoEquipamento(texto);
+  if (cat) return cat.codigo;
+  if (c === 'caminhao') return 'truck_tracao';
+  if (c === 'mini' || c === 'skid' || c === 'bobcat') return 'mini_carregadeira';
+  if (c === 'giro') return 'giro_zero';
   return null;
 }
 
