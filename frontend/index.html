@@ -130,6 +130,10 @@
           <a class="btn btn-primary" id="btn-relatorio-csv" href="#">Baixar CSV</a>
         </div>
       </div>
+      <div class="frota-busca-bar">
+        <label class="frota-busca-label" for="relatorio-filtro-tipo">Tipo de equipamento</label>
+        <select id="relatorio-filtro-tipo" aria-label="Tipo de equipamento"></select>
+      </div>
       <p class="hint">Consolidado da frota para apresentar à diretoria — criticidade, ações e custo de pneus por filial.</p>
       <div id="relatorio-resumo" class="stats-grid"></div>
       <div id="relatorio-leitura" class="compras-banner" style="margin-top:1rem"></div>
@@ -220,6 +224,8 @@
       </div>
       <h2>Resumo da Frota</h2>
       <div class="frota-busca-bar">
+        <label class="frota-busca-label" for="dash-frota-tipo">Tipo</label>
+        <select id="dash-frota-tipo" aria-label="Tipo de equipamento"></select>
         <label class="frota-busca-label" for="dash-frota-busca">Buscar veículo</label>
         <input type="search" id="dash-frota-busca" list="dash-frota-sugestoes" placeholder="Placa, apelido ou modelo…" autocomplete="off">
         <datalist id="dash-frota-sugestoes"></datalist>
@@ -256,6 +262,8 @@
         </div>
       </div>
       <div class="frota-busca-bar">
+        <label class="frota-busca-label" for="veiculos-filtro-tipo">Tipo</label>
+        <select id="veiculos-filtro-tipo" aria-label="Tipo de equipamento"></select>
         <label class="frota-busca-label" for="veiculos-busca">Buscar veículo</label>
         <input type="search" id="veiculos-busca" list="veiculos-sugestoes" placeholder="Placa, apelido ou modelo…" autocomplete="off">
         <datalist id="veiculos-sugestoes"></datalist>

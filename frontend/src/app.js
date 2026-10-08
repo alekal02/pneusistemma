@@ -97,6 +97,117 @@ function codigoTipo(tipo) {
   return tipoDoCatalogo(tipo)?.codigo || tipo || '';
 }
 
+const FILTRO_TIPO_KEY = 'pneu_filtro_tipo';
+const FILTRO_TIPO_IDS = ['dash-frota-tipo', 'veiculos-filtro-tipo', 'relatorio-filtro-tipo', 'unidade-frota-tipo'];
+const tiposAvulsos = new Set();
+
+function chaveTipo(s) {
+  return String(s || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+function lerFiltroTipo() {
+  return sessionStorage.getItem(FILTRO_TIPO_KEY) || '';
+}
+
+function gravarFiltroTipo(valor) {
+  const t = String(valor || '');
+  if (t) sessionStorage.setItem(FILTRO_TIPO_KEY, t);
+  else sessionStorage.removeItem(FILTRO_TIPO_KEY);
+}
+
+/** Catálogo por código/rótulo; tipo fora do catálogo só casa com o texto gravado. */
+function veiculoCombinaFiltroTipo(veiculo, filtro) {
+  const alvo = String(filtro || '').trim();
+  if (!alvo) return true;
+  const catAlvo = tipoDoCatalogo(alvo);
+  const tipo = veiculo?.tipo || '';
+  const codigo = veiculo?.tipo_codigo || '';
+  const catVeic = tipoDoCatalogo(codigo) || tipoDoCatalogo(tipo) || tipoDoCatalogo(normalizarTipoLabel(tipo));
+  if (catAlvo && catVeic) return catAlvo.codigo === catVeic.codigo;
+  if (catAlvo) return codigo === catAlvo.codigo || chaveTipo(tipo) === chaveTipo(catAlvo.label);
+  return chaveTipo(tipo) === chaveTipo(alvo) || chaveTipo(codigo) === chaveTipo(alvo);
+}
+
+let tiposAvulsosColetaIniciada = false;
+
+function registrarTiposAvulsos(veiculos) {
+  for (const v of veiculos || []) {
+    const bruto = String(v?.tipo || '').trim();
+    if (!bruto) continue;
+    if (tipoDoCatalogo(bruto) || tipoDoCatalogo(v?.tipo_codigo) || tipoDoCatalogo(normalizarTipoLabel(bruto))) continue;
+    tiposAvulsos.add(bruto);
+  }
+}
+
+async function coletarTiposAvulsosDaFrota() {
+  if (tiposAvulsosColetaIniciada || currentUser?.papel !== 'filial') return;
+  tiposAvulsosColetaIniciada = true;
+  try {
+    const lista = await fetchJSON(`${API}/veiculos`);
+    registrarTiposAvulsos(lista);
+    preencherSelectsTipo();
+  } catch {
+    tiposAvulsosColetaIniciada = false;
+  }
+}
+
+function opcoesFiltroTipo(extraValor) {
+  const opcoes = [{ value: '', label: 'Todos os equipamentos' }];
+  const usados = new Set(['']);
+  for (const t of meta.tipos_equipamento || []) {
+    if (!t?.codigo || usados.has(t.codigo)) continue;
+    usados.add(t.codigo);
+    opcoes.push({ value: t.codigo, label: t.label });
+  }
+  for (const bruto of [...tiposAvulsos].sort((a, b) => a.localeCompare(b, 'pt-BR'))) {
+    if (usados.has(bruto) || tipoDoCatalogo(bruto)) continue;
+    usados.add(bruto);
+    opcoes.push({ value: bruto, label: normalizarTipoLabel(bruto) || bruto });
+  }
+  if (extraValor && !usados.has(extraValor)) {
+    opcoes.push({ value: extraValor, label: normalizarTipoLabel(extraValor) || extraValor });
+  }
+  return opcoes;
+}
+
+function preencherSelectsTipo() {
+  const preferido = lerFiltroTipo();
+  const html = opcoesFiltroTipo(preferido).map((o) =>
+    `<option value="${escapeHtml(o.value)}">${escapeHtml(o.label)}</option>`
+  ).join('');
+  for (const id of FILTRO_TIPO_IDS) {
+    const sel = document.getElementById(id);
+    if (!sel) continue;
+    const atual = sel.value || preferido;
+    sel.innerHTML = html;
+    const valores = new Set([...sel.options].map((o) => o.value));
+    sel.value = valores.has(atual) ? atual : (valores.has(preferido) ? preferido : '');
+  }
+}
+
+function queryTipo(valor = lerFiltroTipo()) {
+  const tipo = String(valor || '').trim();
+  return tipo ? `?tipo=${encodeURIComponent(tipo)}` : '';
+}
+
+function aoMudarFiltroTipo(e) {
+  const valor = e.target.value;
+  gravarFiltroTipo(valor);
+  for (const id of FILTRO_TIPO_IDS) {
+    const sel = document.getElementById(id);
+    if (sel && sel !== e.target) sel.value = valor;
+  }
+  const view = document.querySelector('.view.active')?.id || '';
+  if (view === 'view-dashboard') loadDashboard();
+  else if (view === 'view-veiculos') filtrarListasFrota('veiculos-busca');
+  else if (view === 'view-relatorios') loadRelatorioDiretoria();
+  else if (view === 'view-filiais') filtrarFrotaUnidade();
+}
+
 let veiculosCache = [];
 let filiaisCache = [];
 let tireMarker = null;
@@ -711,7 +822,7 @@ document.getElementById('btn-voltar-dashboard').addEventListener('click', () => 
 
 async function fetchDashboardResumo() {
   try {
-    return await fetchJSON(`${API}/dashboard/resumo`);
+    return await fetchJSON(`${API}/dashboard/resumo${queryTipo()}`);
   } catch (err) {
     toast('Indicadores do painel indisponíveis. A lista da frota continua abaixo.', 'error');
     try {
@@ -896,6 +1007,9 @@ async function loadDashboard() {
       ? resumo.veiculos
       : await fetchJSON(`${API}/veiculos`);
     veiculosCache = veiculos;
+    registrarTiposAvulsos(veiculos);
+    preencherSelectsTipo();
+    coletarTiposAvulsosDaFrota();
     atualizarSugestoesFrota(veiculos);
     limitesAtuais = { ...limitesAtuais, ...resumo.limites };
     syncMarkersLimites();
@@ -941,7 +1055,11 @@ async function loadDashboard() {
     }
     if (!veiculos.length) {
       if (chips) chips.innerHTML = '';
-      lista.innerHTML = '<div class="empty-state"><h3>Nenhum veículo cadastrado</h3><p>Cadastre seu primeiro veículo na aba Veículos</p></div>';
+      const tipoAtivo = lerFiltroTipo();
+      const tipoLabel = tipoDoCatalogo(tipoAtivo)?.label || tipoAtivo;
+      lista.innerHTML = tipoAtivo
+        ? `<div class="empty-state"><h3>Nenhum veículo deste tipo</h3><p>Não há ${escapeHtml(tipoLabel)} nesta unidade.</p></div>`
+        : '<div class="empty-state"><h3>Nenhum veículo cadastrado</h3><p>Cadastre seu primeiro veículo na aba Veículos</p></div>';
       const logElVazio = document.getElementById('dashboard-log');
       if (logElVazio) logElVazio.innerHTML = renderLogMedicoes(resumo.logs_medicao || []);
       return;
@@ -1053,6 +1171,11 @@ async function loadDashboard() {
   }
 }
 
+document.addEventListener('change', (e) => {
+  if (!FILTRO_TIPO_IDS.includes(e.target?.id)) return;
+  aoMudarFiltroTipo(e);
+});
+
 let frotaBuscaTimer;
 function onInputBuscaFrota(e) {
   clearTimeout(frotaBuscaTimer);
@@ -1094,6 +1217,8 @@ async function loadVeiculos() {
   try {
     const veiculos = await fetchJSON(`${API}/veiculos`);
     veiculosCache = veiculos;
+    registrarTiposAvulsos(veiculos);
+    preencherSelectsTipo();
     atualizarSugestoesFrota(veiculos);
     const lista = document.getElementById('veiculos-lista');
 
@@ -1773,7 +1898,16 @@ function textoBuscaVeiculo(v) {
 
 function attrsBuscaVeiculo(v) {
   const hay = normalizarBuscaPneu(textoBuscaVeiculo(v));
-  return `data-busca="${escapeHtml(hay)}" data-busca-compacta="${escapeHtml(compactarBuscaTexto(hay))}"`;
+  const tipo = normalizarTipoLabel(v?.tipo) || v?.tipo || '';
+  const codigo = v?.tipo_codigo || '';
+  return `data-busca="${escapeHtml(hay)}" data-busca-compacta="${escapeHtml(compactarBuscaTexto(hay))}" data-tipo="${escapeHtml(tipo)}" data-tipo-codigo="${escapeHtml(codigo)}"`;
+}
+
+function cardCombinaTipo(card, filtro) {
+  return veiculoCombinaFiltroTipo({
+    tipo: card?.dataset?.tipo || '',
+    tipo_codigo: card?.dataset?.tipoCodigo || '',
+  }, filtro);
 }
 
 function cardVeiculoCombinaBusca(card, qRaw) {
@@ -1798,35 +1932,39 @@ function gravarBuscaFrota(q) {
   else sessionStorage.removeItem(FROTA_BUSCA_KEY);
 }
 
-function aplicarBuscaListaVeiculos(listaEl, qRaw, contadorEl) {
+function aplicarBuscaListaVeiculos(listaEl, qRaw, contadorEl, filtroTipo = lerFiltroTipo()) {
   if (!listaEl) return 0;
   const q = String(qRaw || '').trim();
   const cards = [...listaEl.querySelectorAll('.veiculo-card')];
   let visiveis = 0;
   cards.forEach((card) => {
-    const ok = cardVeiculoCombinaBusca(card, q);
+    const ok = cardVeiculoCombinaBusca(card, q) && cardCombinaTipo(card, filtroTipo);
     card.classList.toggle('hidden', !ok);
     if (ok) visiveis += 1;
   });
+  const filtrando = Boolean(q) || Boolean(filtroTipo);
   listaEl.querySelectorAll('.dash-frota-sec').forEach((sec) => {
     const algum = [...sec.querySelectorAll('.veiculo-card')].some((c) => !c.classList.contains('hidden'));
-    sec.classList.toggle('hidden', Boolean(q) && !algum);
+    sec.classList.toggle('hidden', filtrando && !algum);
   });
   let vazio = listaEl.querySelector('.frota-busca-vazio');
-  if (q && cards.length && visiveis === 0) {
+  if (filtrando && cards.length && visiveis === 0) {
     if (!vazio) {
       vazio = document.createElement('p');
       vazio.className = 'hint frota-busca-vazio';
       listaEl.appendChild(vazio);
     }
-    vazio.textContent = `Nenhum veículo encontrado para “${q}”.`;
+    const tipoLabel = tipoDoCatalogo(filtroTipo)?.label || filtroTipo;
+    vazio.textContent = q
+      ? `Nenhum veículo encontrado para “${q}”.`
+      : `Nenhum veículo do tipo “${tipoLabel}”.`;
     vazio.classList.remove('hidden');
   } else if (vazio) {
     vazio.classList.add('hidden');
   }
   if (contadorEl) {
     if (!cards.length) contadorEl.textContent = '';
-    else if (!q) contadorEl.textContent = `${cards.length} veículo${cards.length === 1 ? '' : 's'}`;
+    else if (!q && !filtroTipo) contadorEl.textContent = `${cards.length} veículo${cards.length === 1 ? '' : 's'}`;
     else if (visiveis === 1) contadorEl.textContent = '1 encontrado — Enter abre o veículo';
     else contadorEl.textContent = `${visiveis} de ${cards.length}`;
   }
@@ -3430,11 +3568,11 @@ function preencherCheckboxesPosicoes(containerId, selecionadas = []) {
 }
 
 async function carregarMetaVeiculos() {
-  if (meta.layouts?.length && meta.posicoes && Object.keys(meta.posicoes).length) {
-    return meta;
+  if (!(meta.layouts?.length && meta.posicoes && Object.keys(meta.posicoes).length && meta.tipos_equipamento?.length)) {
+    const metaData = await fetchJSON(`${API}/veiculos/meta`);
+    meta = { ...meta, ...metaData };
   }
-  const metaData = await fetchJSON(`${API}/veiculos/meta`);
-  meta = { ...meta, ...metaData };
+  preencherSelectsTipo();
   return meta;
 }
 
@@ -4508,8 +4646,9 @@ function filtrarPendenciasUnidade(filtro) {
 function filtrarFrotaUnidade() {
   const busca = document.getElementById('unidade-frota-busca')?.value || '';
   const filtro = document.getElementById('unidade-frota-filtro')?.value || 'todos';
+  const filtroTipo = document.getElementById('unidade-frota-tipo')?.value || lerFiltroTipo();
   document.querySelectorAll('#unidade-frota-grid .veiculo-card, #unidade-frota-tbody tr.veiculo-item').forEach((row) => {
-    const matchBusca = cardVeiculoCombinaBusca(row, busca);
+    const matchBusca = cardVeiculoCombinaBusca(row, busca) && cardCombinaTipo(row, filtroTipo);
     let matchFiltro = true;
     if (filtro === 'critico') matchFiltro = row.dataset.status === 'critico';
     else if (filtro === 'comprar') matchFiltro = Number(row.dataset.troca || 0) > 0;
@@ -4684,6 +4823,7 @@ function renderUnidadeFrota(data) {
   return `
     <div class="unidade-frota-toolbar">
       <input type="search" id="unidade-frota-busca" placeholder="Buscar placa ou apelido…">
+      <select id="unidade-frota-tipo" aria-label="Tipo de equipamento"></select>
       <select id="unidade-frota-filtro">
         <option value="todos">Todos</option>
         <option value="atencao">Só com atenção</option>
@@ -4822,8 +4962,11 @@ async function abrirDetalheFilial(id) {
       if (btn.dataset.unidadeTab) return;
       btn.addEventListener('click', () => filtrarPendenciasUnidade(btn.dataset.pendFiltro || ''));
     });
+    registrarTiposAvulsos(data.veiculos);
+    preencherSelectsTipo();
     document.getElementById('unidade-frota-busca')?.addEventListener('input', filtrarFrotaUnidade);
     document.getElementById('unidade-frota-filtro')?.addEventListener('change', filtrarFrotaUnidade);
+    filtrarFrotaUnidade();
 
     el.querySelectorAll('.unidade-pend-row').forEach((row) => {
       row.addEventListener('click', () => {
@@ -7091,7 +7234,10 @@ async function baixarPdfSemanalUnidade(filialId) {
   if (!filialId) return toast('Filial não informada', 'error');
   try {
     toast('Gerando PDF semanal…');
-    const resp = await fetch(`${API}/relatorios/unidade/semanal.pdf?filial_id=${encodeURIComponent(filialId)}`, {
+    const tipo = document.getElementById('unidade-frota-tipo')?.value || lerFiltroTipo();
+    const qs = new URLSearchParams({ filial_id: String(filialId) });
+    if (tipo) qs.set('tipo', tipo);
+    const resp = await fetch(`${API}/relatorios/unidade/semanal.pdf?${qs}`, {
       headers: { Authorization: `Bearer ${authToken}` },
     });
     if (!resp.ok) {
@@ -7121,7 +7267,9 @@ async function baixarPdfSemanalUnidade(filialId) {
 async function loadRelatorioDiretoria() {
   if (!isAdmin()) return;
   try {
-    const rel = await fetchJSON(`${API}/relatorios/diretoria`);
+    await carregarMetaVeiculos().catch(() => {});
+    preencherSelectsTipo();
+    const rel = await fetchJSON(`${API}/relatorios/diretoria${queryTipo()}`);
     const c = rel.consolidado || {};
     document.getElementById('relatorio-resumo').innerHTML = `
       <div class="stat-card"><span class="stat-value">${c.filiais_ativas ?? 0}</span><span class="stat-label">Filiais</span></div>
@@ -7159,11 +7307,12 @@ async function loadRelatorioDiretoria() {
 
     const csv = document.getElementById('btn-relatorio-csv');
     if (csv) {
-      csv.href = `${API}/relatorios/diretoria.csv`;
+      const csvUrl = `${API}/relatorios/diretoria.csv${queryTipo()}`;
+      csv.href = csvUrl;
       csv.onclick = async (e) => {
         e.preventDefault();
         try {
-          const resp = await fetch(`${API}/relatorios/diretoria.csv`, {
+          const resp = await fetch(`${API}/relatorios/diretoria.csv${queryTipo()}`, {
             headers: { Authorization: `Bearer ${authToken}` },
           });
           if (!resp.ok) throw new Error('Falha ao baixar CSV');

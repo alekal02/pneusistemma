@@ -118,17 +118,46 @@ const FILTROS_RELATORIO = {
   giro_zero: { id: 'giro_zero', label: 'Giro zero', codigos: ['giro_zero'] },
 };
 
+function normFiltro(s) {
+  return String(s || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+/** Grupo só para o atalho explícito. Código ou rótulo do catálogo não entra aqui. */
+function filtroGrupoCaminhao(bruto) {
+  return bruto === 'caminhao'
+    || bruto === 'caminhoes'
+    || bruto === 'compactadores'
+    || bruto === 'caminhao/compactador'
+    || bruto === 'caminhao compactador'
+    || bruto === 'caminhao_compactador';
+}
+
+function filtroEhTipoCatalogo(original, cat) {
+  const n = normFiltro(original);
+  return n === cat.codigo || n === normFiltro(cat.label);
+}
+
 export function resolverFiltroRelatorio(tipo) {
-  const bruto = String(tipo || '').trim().toLowerCase();
+  const original = String(tipo || '').trim();
+  const bruto = normFiltro(original);
   if (!bruto || bruto === 'todos' || bruto === 'todas') return FILTROS_RELATORIO.todos;
   if (FILTROS_RELATORIO[bruto]) return FILTROS_RELATORIO[bruto];
-  if (/caminh|compact/.test(bruto)) return FILTROS_RELATORIO.caminhao_compactador;
-  const cat = resolverTipoEquipamento(bruto);
-  if (cat && FILTROS_RELATORIO[cat.codigo]) return FILTROS_RELATORIO[cat.codigo];
-  if (cat) {
+
+  const cat = resolverTipoEquipamento(original);
+  if (cat && filtroEhTipoCatalogo(original, cat)) {
+    if (FILTROS_RELATORIO[cat.codigo]) return FILTROS_RELATORIO[cat.codigo];
     return { id: cat.codigo, label: cat.label, codigos: [cat.codigo] };
   }
-  return FILTROS_RELATORIO.todos;
+  if (filtroGrupoCaminhao(bruto)) return FILTROS_RELATORIO.caminhao_compactador;
+  if (cat) {
+    if (FILTROS_RELATORIO[cat.codigo]) return FILTROS_RELATORIO[cat.codigo];
+    return { id: cat.codigo, label: cat.label, codigos: [cat.codigo] };
+  }
+  return { id: original, label: original, codigos: null, texto: original };
 }
 
 function unidadeDoFiltro(filtro) {
@@ -141,9 +170,19 @@ function unidadeDoFiltro(filtro) {
 }
 
 function veiculoNoFiltro(veiculo, filtro) {
+  if (filtro?.texto) {
+    const alvo = normFiltro(filtro.texto);
+    const tipo = normFiltro(veiculo?.tipo);
+    const codigo = normFiltro(veiculo?.tipo_codigo);
+    return tipo === alvo || codigo === alvo;
+  }
   if (!filtro?.codigos?.length) return true;
   const codigo = veiculo.tipo_codigo || resolverTipoEquipamento(veiculo.tipo)?.codigo || '';
   return filtro.codigos.includes(codigo);
+}
+
+export function veiculoPassaFiltroRelatorio(veiculo, tipo) {
+  return veiculoNoFiltro(veiculo, resolverFiltroRelatorio(tipo));
 }
 
 function resumirEstoqueParaPdf(estoque, limites) {

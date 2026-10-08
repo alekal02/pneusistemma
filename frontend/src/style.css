@@ -330,6 +330,15 @@ h3 {
   font-weight: 600;
   font-size: .88rem;
 }
+.frota-busca-bar select {
+  padding: .55rem .7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font);
+  font-size: .95rem;
+  background: var(--surface, #fff);
+  max-width: 240px;
+}
 .frota-busca-bar input[type="search"] {
   flex: 1;
   min-width: min(100%, 220px);
