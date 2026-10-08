@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS veiculos (
   filial_id BIGINT REFERENCES filiais(id) ON DELETE RESTRICT,
   layout_pneus TEXT DEFAULT 'truck_10',
   dia_medicao INTEGER,
+  cadastro_completo INTEGER DEFAULT 1,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -78,6 +79,7 @@ CREATE TABLE IF NOT EXISTS pneus (
   tratamento_descarte TEXT,
   tratamento_descarte_obs TEXT,
   tratamento_descarte_em TEXT,
+  cadastro_completo INTEGER DEFAULT 1,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE (veiculo_id, posicao)
 );
@@ -143,8 +145,10 @@ CREATE TABLE IF NOT EXISTS notificacoes_whatsapp (
 CREATE TABLE IF NOT EXISTS tokens_acesso_rapido (
   id BIGSERIAL PRIMARY KEY,
   token TEXT UNIQUE NOT NULL,
-  veiculo_id BIGINT NOT NULL REFERENCES veiculos(id),
+  veiculo_id BIGINT REFERENCES veiculos(id),
+  pneu_id BIGINT REFERENCES pneus(id),
   filial_id BIGINT NOT NULL REFERENCES filiais(id),
+  tipo TEXT NOT NULL DEFAULT 'medir',
   whatsapp_origem TEXT,
   expira_em TIMESTAMPTZ NOT NULL,
   usado_em TIMESTAMPTZ,

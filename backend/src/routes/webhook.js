@@ -54,7 +54,7 @@ function chaveTextoWebhook(filialId, body) {
 }
 
 /** true = já tratamos; false = primeira vez (marca na hora, antes do próximo await) */
-function mensagemDuplicada({ id, filialId, body }) {
+export function mensagemDuplicada({ id, filialId, body }) {
   const now = Date.now();
   limparMensagensVistas(now);
   if (id) {
@@ -62,6 +62,7 @@ function mensagemDuplicada({ id, filialId, body }) {
     const prev = mensagensVistas.get(chaveId);
     if (prev && now - prev.ts < DEDUP_ID_MS) return true;
     mensagensVistas.set(chaveId, { ts: now });
+    return false;
   }
   const texto = String(body || '').trim();
   if (texto) {
@@ -448,6 +449,7 @@ router.post('/whatsapp', async (req, res) => {
       destino: destinoEnvio,
       filialId: canal?.escopoFilialId || null,
       chatJid: chatJid || null,
+      mensagemId: msgId || null,
     }).then((r) => {
       if (r?.handled) {
         console.log('[webhook] menu handled', {

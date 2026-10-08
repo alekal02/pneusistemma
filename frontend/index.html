@@ -568,7 +568,7 @@
     <section id="view-ar-veiculo" class="view">
       <div class="ar-form-wrap card">
         <p class="cb-kicker">WhatsApp · acesso rápido</p>
-        <h2>Cadastrar caminhão</h2>
+        <h2 id="ar-veiculo-titulo">Cadastrar caminhão</h2>
         <p class="hint" id="ar-veiculo-filial"></p>
         <form id="form-ar-veiculo">
           <div class="form-group">
@@ -588,6 +588,18 @@
               <option value="Utilitário / Varredeira">Utilitário / Varredeira</option>
               <option value="Trator">Trator</option>
             </select>
+          </div>
+          <div class="form-group">
+            <label for="ar-v-marca">Fabricante *</label>
+            <input type="text" id="ar-v-marca" required placeholder="Ex: Mercedes">
+          </div>
+          <div class="form-group">
+            <label for="ar-v-modelo">Modelo *</label>
+            <input type="text" id="ar-v-modelo" required placeholder="Ex: Atego">
+          </div>
+          <div class="form-group">
+            <label for="ar-v-layout">Configuração dos eixos *</label>
+            <select id="ar-v-layout" required></select>
           </div>
           <div class="form-group">
             <label for="ar-v-km">KM atual</label>

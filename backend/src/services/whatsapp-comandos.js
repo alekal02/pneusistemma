@@ -15,7 +15,50 @@ const RE_RECAP = /^(recap|recapagem|recapar|recape|recapeamento|rec)$/;
 const RE_EST = /^(estoque|stock|desmontar|desmonta|estq|est)$/;
 const RE_ONDE = /^(onde|localizar|localiza|achar|acha|encontrar|cad[eê]|status|situacao)$/;
 const RE_TROCA = /^(trocar|troca|substituir|substitui|subst)$/;
+const RE_CAD = /^(cadastrar|cadastro|cadastre|cadastra|cad)$/;
+const RE_PNEU = /^(pneu|pneus|tire)$/;
 const RE_LIXO = /^(pneu|por|pelo|pela|pro|pra|para|ao|a|o|um|uma|do|da|de|no|na|com|em|este|essa|esse|foi|vai|enviar|envie|manda|mandar|o|os)$/;
+
+const TIPOS_CADASTRO_VEICULO = [
+  [/^(caminhao|truck|tracao)$/, 'Truck / Tração'],
+  [/^(trator|tratores)$/, 'Trator'],
+  [/^(toco|mini)$/, 'Toco / Mini'],
+  [/^(compactador|compactadora)$/, 'Compactador'],
+  [/^(utilitario|varredeira)$/, 'Utilitário / Varredeira'],
+  [/^(veiculo|veiculos)$/, null],
+];
+
+function parseCadastrar(parts) {
+  const iCad = parts.findIndex((p) => RE_CAD.test(p));
+  const semCad = parts.filter((_, i) => i !== iCad);
+  const iPneu = semCad.findIndex((p) => RE_PNEU.test(p));
+  if (iPneu >= 0) {
+    const resto = semCad.filter((_, i) => i !== iPneu);
+    const fogos = fogosDe(resto);
+    return { tipo: 'cadastrar_pneu', fogo: fogos[0] || null };
+  }
+
+  let tipoVeiculo;
+  let iTipo = -1;
+  for (let i = 0; i < semCad.length; i += 1) {
+    for (const [re, tipo] of TIPOS_CADASTRO_VEICULO) {
+      if (re.test(semCad[i])) {
+        tipoVeiculo = tipo;
+        iTipo = i;
+        break;
+      }
+    }
+    if (iTipo >= 0) break;
+  }
+
+  const placaParts = semCad.filter((_, i) => i !== iTipo);
+  const placa = placaParts.join('') || null;
+  return {
+    tipo: 'cadastrar_veiculo',
+    placa: placa && /[0-9]/.test(placa) ? placa.toUpperCase() : null,
+    tipoVeiculo: tipoVeiculo === undefined ? null : tipoVeiculo,
+  };
+}
 
 function pareceTokenFogo(t) {
   const s = String(t || '').trim();
@@ -43,10 +86,16 @@ function fogosDe(parts) {
 }
 
 /**
- * @returns {{ tipo: 'descarte'|'recap'|'estoque'|'troca'|'onde', fogo: string, fogo2?: string } | null}
+ * @returns {{ tipo: string, fogo?: string, fogo2?: string, placa?: string|null, tipoVeiculo?: string|null } | null}
  */
 export function parseComandoNatural(texto) {
   const parts = tokensDe(texto);
+  if (!parts.length) return null;
+
+  if (parts.some((p) => RE_CAD.test(p))) {
+    return parseCadastrar(parts);
+  }
+
   if (parts.length < 2) return null;
 
   const fogos = fogosDe(parts);

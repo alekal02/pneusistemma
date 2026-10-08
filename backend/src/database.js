@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS veiculos (
   filial_id BIGINT REFERENCES filiais(id) ON DELETE RESTRICT,
   layout_pneus TEXT DEFAULT 'truck_10',
   dia_medicao INTEGER,
+  cadastro_completo INTEGER DEFAULT 1,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -79,6 +80,7 @@ CREATE TABLE IF NOT EXISTS pneus (
   custo DOUBLE PRECISION,
   nota_fiscal TEXT,
   data_alerta_monitorar TEXT,
+  cadastro_completo INTEGER DEFAULT 1,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE (veiculo_id, posicao)
 );
@@ -145,6 +147,7 @@ CREATE TABLE IF NOT EXISTS tokens_acesso_rapido (
   id BIGSERIAL PRIMARY KEY,
   token TEXT UNIQUE NOT NULL,
   veiculo_id BIGINT REFERENCES veiculos(id),
+  pneu_id BIGINT REFERENCES pneus(id),
   filial_id BIGINT NOT NULL REFERENCES filiais(id),
   tipo TEXT NOT NULL DEFAULT 'medir',
   whatsapp_origem TEXT,
@@ -355,6 +358,9 @@ export async function initDatabase() {
   await ensureColumn('filiais', 'dia_medicao', 'INTEGER');
   await ensureColumn('veiculos', 'dia_medicao', 'INTEGER');
   await ensureColumn('tokens_acesso_rapido', 'tipo', "TEXT NOT NULL DEFAULT 'medir'");
+  await ensureColumn('tokens_acesso_rapido', 'pneu_id', 'BIGINT');
+  await ensureColumn('veiculos', 'cadastro_completo', 'INTEGER DEFAULT 1');
+  await ensureColumn('pneus', 'cadastro_completo', 'INTEGER DEFAULT 1');
   try {
     await db.exec(`
       ALTER TABLE tokens_acesso_rapido ALTER COLUMN veiculo_id DROP NOT NULL

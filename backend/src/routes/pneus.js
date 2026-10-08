@@ -45,6 +45,7 @@ import {
   registrarDescarte,
   enviarAoEstoqueOuTrocar,
   autorizarDesmontagemSimples,
+  cadastroEstaCompleto,
 } from '../services/whatsapp-ops.js';
 import {
   consultarProximoFogo,
@@ -916,6 +917,16 @@ router.post('/:id/montar', async (req, res, next) => {
 
     const veiculo = await assertVeiculoDaFilial(veiculo_id, filialId);
     if (!veiculo) return res.status(404).json({ erro: 'Veículo não encontrado' });
+    if (!cadastroEstaCompleto(veiculo)) {
+      return res.status(400).json({
+        erro: 'Veículo em pré-cadastro: conclua o cadastro no link web antes de operar',
+      });
+    }
+    if (!cadastroEstaCompleto(pneu)) {
+      return res.status(400).json({
+        erro: 'Pneu em pré-cadastro: conclua o cadastro no link web antes de operar',
+      });
+    }
 
     const layout = getLayout(veiculo.layout_pneus || LAYOUT_PADRAO);
     if (!layout.posicoes.includes(posicao)) {

@@ -160,6 +160,15 @@ export const LAYOUTS_PNEU = {
 
 export const LAYOUT_PADRAO = 'truck_10';
 
+export function listarLayoutsPublicos() {
+  return Object.values(LAYOUTS_PNEU).map((l) => ({
+    id: l.id,
+    nome: l.nome,
+    descricao: l.descricao,
+    posicoes: l.posicoes,
+  }));
+}
+
 export const TIPOS_PNEU = ['direcional', 'misto', 'borrachudo'];
 export const CONDICOES_PNEU = ['novo', 'recapado'];
 export const STATUS_PNEU = ['montado', 'estoque', 'recapagem', 'descarte'];

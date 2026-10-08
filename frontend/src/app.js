@@ -7038,6 +7038,28 @@ async function bootArCadastroVeiculo(token) {
     if (selTipo && Array.isArray(data.tipos) && data.tipos.length) {
       selTipo.innerHTML = data.tipos.map((t) => `<option value="${t}">${t}</option>`).join('');
     }
+    const selLayout = document.getElementById('ar-v-layout');
+    if (selLayout && Array.isArray(data.layouts) && data.layouts.length) {
+      selLayout.innerHTML = data.layouts.map((l) =>
+        `<option value="${l.id}">${l.nome}</option>`
+      ).join('');
+    }
+    const v = data.veiculo;
+    if (v) {
+      const titulo = document.getElementById('ar-veiculo-titulo');
+      if (titulo) titulo.textContent = 'Concluir cadastro do veículo';
+      const inpPlaca = document.getElementById('ar-v-placa');
+      if (inpPlaca) {
+        inpPlaca.value = v.placa || '';
+        inpPlaca.readOnly = true;
+      }
+      if (selTipo && v.tipo) selTipo.value = v.tipo;
+      if (document.getElementById('ar-v-apelido')) document.getElementById('ar-v-apelido').value = v.apelido || '';
+      if (document.getElementById('ar-v-marca')) document.getElementById('ar-v-marca').value = v.marca || '';
+      if (document.getElementById('ar-v-modelo')) document.getElementById('ar-v-modelo').value = v.modelo || '';
+      if (selLayout && v.layout_pneus) selLayout.value = v.layout_pneus;
+      if (document.getElementById('ar-v-km')) document.getElementById('ar-v-km').value = v.km_atual ?? 0;
+    }
   } catch (err) {
     mostrarErroToken(err.message);
     return;
@@ -7058,6 +7080,9 @@ async function bootArCadastroVeiculo(token) {
           placa: document.getElementById('ar-v-placa')?.value,
           apelido: document.getElementById('ar-v-apelido')?.value || null,
           tipo: document.getElementById('ar-v-tipo')?.value,
+          marca: document.getElementById('ar-v-marca')?.value,
+          modelo: document.getElementById('ar-v-modelo')?.value,
+          layout_pneus: document.getElementById('ar-v-layout')?.value,
           km_atual: Number(document.getElementById('ar-v-km')?.value) || 0,
         }),
       });
@@ -7084,6 +7109,23 @@ async function bootArCadastroPneu(token) {
     }
     const fil = document.getElementById('ar-pneu-filial');
     if (fil) fil.textContent = data.filial ? `${data.filial.nome} (${data.filial.codigo || ''})` : '';
+    const p = data.pneu;
+    if (p) {
+      const inpFogo = document.getElementById('ar-p-fogo');
+      if (inpFogo) {
+        inpFogo.value = p.numero_fogo || '';
+        inpFogo.readOnly = true;
+      }
+      if (document.getElementById('ar-p-modelo') && p.modelo && !/^pendente$/i.test(p.modelo)) {
+        document.getElementById('ar-p-modelo').value = p.modelo;
+      }
+      if (document.getElementById('ar-p-marca')) document.getElementById('ar-p-marca').value = p.marca || '';
+      if (document.getElementById('ar-p-tipo') && p.tipo_pneu) document.getElementById('ar-p-tipo').value = p.tipo_pneu;
+      if (document.getElementById('ar-p-condicao') && p.condicao) document.getElementById('ar-p-condicao').value = p.condicao;
+      if (document.getElementById('ar-p-sulco') && p.sulco_inicial_mm != null) {
+        document.getElementById('ar-p-sulco').value = p.sulco_inicial_mm;
+      }
+    }
   } catch (err) {
     mostrarErroToken(err.message);
     return;

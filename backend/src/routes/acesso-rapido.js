@@ -20,6 +20,7 @@ import {
   LAYOUT_PADRAO,
   validarMontagem,
   labelPosicao,
+  listarLayoutsPublicos,
 } from '../pneus-layouts.js';
 import { consultarProximoFogo } from '../numero-fogo.js';
 
@@ -52,11 +53,36 @@ router.get('/', async (req, res, next) => {
     };
 
     if (row.tipo === 'cadastrar_veiculo') {
-      return res.json({ ...payload, tipos: TIPOS_VEICULO });
+      let veiculo = null;
+      if (row.veiculo_id) {
+        veiculo = await db.prepare(`
+          SELECT id, placa, apelido, tipo, marca, modelo, km_atual, layout_pneus, cadastro_completo
+          FROM veiculos WHERE id = ? AND filial_id = ?
+        `).get(row.veiculo_id, row.filial_id);
+      }
+      return res.json({
+        ...payload,
+        tipos: TIPOS_VEICULO,
+        layouts: listarLayoutsPublicos(),
+        veiculo,
+        pre_cadastro: Boolean(veiculo && Number(veiculo.cadastro_completo) !== 1),
+      });
     }
     if (row.tipo === 'cadastrar_pneu') {
       const proximo_fogo = await consultarProximoFogo(db, row.filial_id).catch(() => null);
-      return res.json({ ...payload, proximo_fogo });
+      let pneu = null;
+      if (row.pneu_id) {
+        pneu = await db.prepare(`
+          SELECT id, numero_fogo, marca, modelo, tipo_pneu, condicao, sulco_inicial_mm, cadastro_completo
+          FROM pneus WHERE id = ? AND filial_id = ?
+        `).get(row.pneu_id, row.filial_id);
+      }
+      return res.json({
+        ...payload,
+        proximo_fogo,
+        pneu,
+        pre_cadastro: Boolean(pneu && Number(pneu.cadastro_completo) !== 1),
+      });
     }
 
     if (!row.veiculo_id) {
@@ -108,21 +134,40 @@ router.get('/proximo-fogo', async (req, res, next) => {
 
 router.post('/veiculo', async (req, res, next) => {
   try {
-    const { token, placa, apelido, tipo, km_atual, layout_pneus } = req.body || {};
+    const { token, placa, apelido, tipo, km_atual, layout_pneus, marca, modelo } = req.body || {};
     const row = await tokenOuErro(token, ['cadastrar_veiculo']);
-    if (!placa?.trim()) return res.status(400).json({ erro: 'Placa é obrigatória' });
+    if (!String(modelo || '').trim()) {
+      return res.status(400).json({ erro: 'Modelo é obrigatório' });
+    }
+    if (!String(marca || '').trim()) {
+      return res.status(400).json({ erro: 'Fabricante é obrigatório' });
+    }
+    if (!layout_pneus) {
+      return res.status(400).json({ erro: 'Configuração dos eixos é obrigatória' });
+    }
 
-    const created = await ops.criarVeiculo(row.filial_id, {
-      placa: placa.trim(),
-      apelido: apelido || null,
-      tipo: tipo || 'Truck / Tração',
-      km_atual: km_atual ?? 0,
-      layout_pneus: layout_pneus || null,
-    });
+    let created;
+    if (row.veiculo_id) {
+      created = await ops.completarVeiculo(row.filial_id, row.veiculo_id, {
+        placa, apelido, tipo, km_atual, layout_pneus, marca, modelo,
+      });
+    } else {
+      if (!placa?.trim()) return res.status(400).json({ erro: 'Placa é obrigatória' });
+      created = await ops.criarVeiculo(row.filial_id, {
+        placa: placa.trim(),
+        apelido: apelido || null,
+        tipo: tipo || 'Truck / Tração',
+        km_atual: km_atual ?? 0,
+        layout_pneus: layout_pneus || null,
+        marca,
+        modelo,
+      });
+    }
     await marcarTokenUsado(row.id);
 
+    const placaOk = created.placa || String(placa || '').trim().toUpperCase();
     res.status(201).json({
-      mensagem: `Caminhão ${String(placa).trim().toUpperCase()} cadastrado`,
+      mensagem: `Caminhão ${placaOk} cadastrado`,
       veiculo_id: created.id,
       total_posicoes: created.total_posicoes,
     });
@@ -150,14 +195,26 @@ router.post('/pneu', async (req, res, next) => {
       return res.status(400).json({ erro: `Condição inválida: ${CONDICOES_PNEU.join(', ')}` });
     }
 
-    const created = await ops.criarPneuEstoque(row.filial_id, {
-      numero_fogo,
-      marca: marca || null,
-      modelo: String(modelo).trim(),
-      tipo_pneu: tipo,
-      condicao: cond,
-      sulco_inicial_mm: sulco_inicial_mm ?? null,
-    });
+    let created;
+    if (row.pneu_id) {
+      created = await ops.completarPneu(row.filial_id, row.pneu_id, {
+        numero_fogo,
+        marca: marca || null,
+        modelo: String(modelo).trim(),
+        tipo_pneu: tipo,
+        condicao: cond,
+        sulco_inicial_mm: sulco_inicial_mm ?? null,
+      });
+    } else {
+      created = await ops.criarPneuEstoque(row.filial_id, {
+        numero_fogo,
+        marca: marca || null,
+        modelo: String(modelo).trim(),
+        tipo_pneu: tipo,
+        condicao: cond,
+        sulco_inicial_mm: sulco_inicial_mm ?? null,
+      });
+    }
     await marcarTokenUsado(row.id);
 
     res.status(201).json({

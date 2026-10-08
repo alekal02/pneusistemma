@@ -35,11 +35,12 @@ export function linkAcessoRapido(tipo, token) {
 }
 
 /**
- * @param {{ tipo?: string, veiculoId?: number|null, filialId: number, whatsappOrigem?: string|null }} opts
+ * @param {{ tipo?: string, veiculoId?: number|null, pneuId?: number|null, filialId: number, whatsappOrigem?: string|null }} opts
  */
 export async function gerarTokenAcessoRapido({
   tipo = 'medir',
   veiculoId = null,
+  pneuId = null,
   filialId,
   whatsappOrigem = null,
 }) {
@@ -52,9 +53,9 @@ export async function gerarTokenAcessoRapido({
   const db = getDb();
   const token = randomBytes(32).toString('hex');
   await db.prepare(`
-    INSERT INTO tokens_acesso_rapido (token, veiculo_id, filial_id, tipo, whatsapp_origem, expira_em)
-    VALUES (?, ?, ?, ?, ?, datetime('now', 'localtime', '+24 hours'))
-  `).run(token, veiculoId || null, filialId, tipoOk, whatsappOrigem);
+    INSERT INTO tokens_acesso_rapido (token, veiculo_id, pneu_id, filial_id, tipo, whatsapp_origem, expira_em)
+    VALUES (?, ?, ?, ?, ?, ?, datetime('now', 'localtime', '+24 hours'))
+  `).run(token, veiculoId || null, pneuId || null, filialId, tipoOk, whatsappOrigem);
 
   const link = linkAcessoRapido(tipoOk, token);
   if (/localhost|127\.0\.0\.1/i.test(link)) {
@@ -78,6 +79,17 @@ export async function validarTokenAcessoRapido(token, tiposPermitidos = null) {
   if (Array.isArray(tiposPermitidos) && tiposPermitidos.length && !tiposPermitidos.includes(tipo)) {
     return null;
   }
+  if ((tipo === 'cadastrar_veiculo' || tipo === 'cadastrar_pneu') && row.usado_em) {
+    return null;
+  }
+  if (row.veiculo_id) {
+    const v = await db.prepare(`SELECT filial_id FROM veiculos WHERE id = ?`).get(row.veiculo_id);
+    if (!v || Number(v.filial_id) !== Number(row.filial_id)) return null;
+  }
+  if (row.pneu_id) {
+    const p = await db.prepare(`SELECT filial_id FROM pneus WHERE id = ?`).get(row.pneu_id);
+    if (!p || Number(p.filial_id) !== Number(row.filial_id)) return null;
+  }
   return { ...row, tipo };
 }
 
@@ -99,6 +111,7 @@ export async function contarEstoqueFilial(filialId) {
   const row = await db.prepare(`
     SELECT COUNT(*) as n FROM pneus
     WHERE filial_id = ? AND ativo = 1 AND status_pneu = 'estoque'
+      AND COALESCE(cadastro_completo, 1) = 1
   `).get(filialId);
   return Number(row?.n || 0);
 }
@@ -130,6 +143,7 @@ export async function listarEstoqueFilial(filialId, limite = 4000, busca = '') {
     SELECT id, numero_fogo, marca, modelo, tipo_pneu, condicao, vida_recap, sulco_inicial_mm, status_pneu
     FROM pneus
     WHERE filial_id = ? AND ativo = 1 AND status_pneu = 'estoque'
+      AND COALESCE(cadastro_completo, 1) = 1
     ${filtro}
     ORDER BY LOWER(COALESCE(numero_fogo, '')), id
     LIMIT ?

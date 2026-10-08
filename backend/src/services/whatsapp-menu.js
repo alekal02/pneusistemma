@@ -19,6 +19,7 @@ import {
   enviarDocumentoERegistrar,
 } from './whatsapp.js';
 import { parseComandoNatural } from './whatsapp-comandos.js';
+import { TIPOS_VEICULO } from '../config.js';
 
 export function textoMenu() {
   return [
@@ -134,26 +135,20 @@ function simNao(texto) {
 }
 
 const comandosRecentes = new Map();
-const COMANDO_DEDUP_MS = 25_000;
+const COMANDO_DEDUP_ID_MS = 120_000;
 
-function chaveComandoMenu(filialId, texto) {
-  const placa = normalizarPlaca(texto);
-  if (placa.length >= 3 && placa.length <= 12 && /[A-Z]/.test(placa) && /[0-9]/.test(placa)) {
-    return `p:${filialId}|${placa}`;
-  }
-  return `t:${filialId}|${norm(texto)}`;
-}
-
-function comandoDuplicado(filialId, texto) {
+function comandoDuplicado(ctx) {
+  const id = ctx?.mensagemId;
+  if (!id) return false;
   const now = Date.now();
   if (comandosRecentes.size > 200) {
     for (const [k, ts] of comandosRecentes) {
-      if (now - ts > COMANDO_DEDUP_MS) comandosRecentes.delete(k);
+      if (now - ts > COMANDO_DEDUP_ID_MS) comandosRecentes.delete(k);
     }
   }
-  const chave = chaveComandoMenu(filialId, texto);
+  const chave = `id:${id}`;
   const prev = comandosRecentes.get(chave);
-  if (prev && now - prev < COMANDO_DEDUP_MS) return true;
+  if (prev && now - prev < COMANDO_DEDUP_ID_MS) return true;
   comandosRecentes.set(chave, now);
   return false;
 }
@@ -304,6 +299,215 @@ async function enviarLinkCadastro(ctx, tipo) {
       ctx,
       `🛞 *Cadastrar pneu (estoque)*\n\nAbra o link e informe nº de fogo, modelo e padrão:\n👉 ${link}\n\n_Válido 24h. Digite *menu*._`
     );
+  }
+}
+
+function textoTiposVeiculo() {
+  return TIPOS_VEICULO.map((t, i) => `*${i + 1}* ${t}`).join('\n');
+}
+
+function resolverTipoVeiculoDigitado(texto) {
+  const n = soNumero(texto);
+  if (n != null) {
+    const idx = parseInt(n, 10) - 1;
+    if (idx >= 0 && idx < TIPOS_VEICULO.length) return TIPOS_VEICULO[idx];
+  }
+  const c = norm(texto);
+  if (/caminhao|truck|tracao/.test(c)) return 'Truck / Tração';
+  if (/trator/.test(c)) return 'Trator';
+  if (/toco|mini/.test(c)) return 'Toco / Mini';
+  if (/compactador/.test(c)) return 'Compactador';
+  if (/utilit|varredeira/.test(c)) return 'Utilitário / Varredeira';
+  return null;
+}
+
+function textoPreCadastroVeiculo(placa, link) {
+  return [
+    '✅ Pré-cadastro realizado!',
+    '',
+    `🚛 Veículo: ${placa}`,
+    '',
+    'Para concluir o cadastro, acesse o link abaixo e informe modelo, fabricante, configuração dos eixos e demais informações necessárias.',
+    '',
+    `🔗 ${link}`,
+    '',
+    '⚠️ O veículo só estará disponível para operações após a conclusão do cadastro.',
+  ].join('\n');
+}
+
+function textoPreCadastroPneu(fogo, link) {
+  return [
+    '✅ Pré-cadastro realizado!',
+    '',
+    `🛞 Pneu: ${fogo}`,
+    '',
+    'Para concluir o cadastro, acesse o link abaixo e informe modelo, fabricante e demais informações técnicas.',
+    '',
+    `🔗 ${link}`,
+    '',
+    '⚠️ O pneu só estará disponível para operações após a conclusão do cadastro.',
+  ].join('\n');
+}
+
+async function pedirConfirmacaoPreCadastro(ctx, dados) {
+  await setFluxo(ctx, 'pre_cadastro', 'confirma', dados);
+  if (dados.alvo === 'pneu') {
+    await reply(ctx, `Pré-cadastrar pneu *${dados.fogo}*?\n*1* sim · *0* não`);
+    return;
+  }
+  await reply(
+    ctx,
+    `Pré-cadastrar *${dados.placa}* como *${dados.tipoVeiculo}*?\n*1* sim · *0* não`
+  );
+}
+
+async function concluirPreCadastroVeiculo(ctx, { placa, tipoVeiculo }) {
+  const existente = await ops.buscarPlacaFilial(ctx.filialId, placa);
+  if (existente) {
+    await clear(ctx);
+    if (!ops.cadastroEstaCompleto(existente)) {
+      await reply(ctx, `❌ *${existente.placa}* já está em pré-cadastro nesta unidade. Conclua pelo link enviado.`);
+    } else {
+      await reply(ctx, `❌ Placa *${existente.placa}* já cadastrada nesta unidade.`);
+    }
+    return;
+  }
+  const created = await ops.criarVeiculo(ctx.filialId, {
+    placa,
+    tipo: tipoVeiculo,
+    preCadastro: true,
+  });
+  const { link } = await gerarTokenAcessoRapido({
+    tipo: 'cadastrar_veiculo',
+    veiculoId: created.id,
+    filialId: ctx.filialId,
+    whatsappOrigem: ctx.phone || ctx.destino,
+  });
+  await clear(ctx);
+  await reply(ctx, textoPreCadastroVeiculo(String(placa).trim().toUpperCase(), link));
+}
+
+async function concluirPreCadastroPneu(ctx, { fogo }) {
+  const hits = await ops.buscarPneusPorFogo(ctx.filialId, fogo);
+  const existente = hits.find((p) =>
+    String(p.numero_fogo || '').replace(/[-\s]/g, '').toLowerCase()
+    === String(fogo).replace(/[-\s]/g, '').toLowerCase()
+  ) || (hits.length === 1 ? hits[0] : null);
+  if (existente) {
+    await clear(ctx);
+    await reply(ctx, `❌ Já existe pneu com o nº de fogo *${existente.numero_fogo}* nesta unidade.`);
+    return;
+  }
+  const created = await ops.criarPneuEstoque(ctx.filialId, {
+    numero_fogo: fogo,
+    modelo: 'Pendente',
+    preCadastro: true,
+  });
+  const { link } = await gerarTokenAcessoRapido({
+    tipo: 'cadastrar_pneu',
+    pneuId: created.id,
+    filialId: ctx.filialId,
+    whatsappOrigem: ctx.phone || ctx.destino,
+  });
+  await clear(ctx);
+  await reply(ctx, textoPreCadastroPneu(created.numero_fogo || fogo, link));
+}
+
+async function iniciarPreCadastro(ctx, natural) {
+  if (natural.tipo === 'cadastrar_pneu') {
+    if (!natural.fogo) {
+      await setFluxo(ctx, 'pre_cadastro', 'fogo', { alvo: 'pneu' });
+      await reply(ctx, '🛞 Envie o *nº de fogo* do pneu.\n_0 = cancelar_');
+      return;
+    }
+    await pedirConfirmacaoPreCadastro(ctx, { alvo: 'pneu', fogo: natural.fogo });
+    return;
+  }
+
+  const placa = natural.placa ? String(natural.placa).toUpperCase() : null;
+  const tipoVeiculo = natural.tipoVeiculo || null;
+  if (placa) {
+    const existente = await ops.buscarPlacaFilial(ctx.filialId, placa);
+    if (existente) {
+      if (!ops.cadastroEstaCompleto(existente)) {
+        await reply(ctx, `❌ *${existente.placa}* já está em pré-cadastro nesta unidade. Conclua pelo link enviado.`);
+      } else {
+        await reply(ctx, `❌ Placa *${existente.placa}* já cadastrada nesta unidade.`);
+      }
+      return;
+    }
+  }
+  if (!placa) {
+    await setFluxo(ctx, 'pre_cadastro', 'placa', { alvo: 'veiculo', tipoVeiculo });
+    await reply(ctx, '🚛 Envie a *placa* ou identificação interna do veículo.\n_0 = cancelar_');
+    return;
+  }
+  if (!tipoVeiculo) {
+    await setFluxo(ctx, 'pre_cadastro', 'tipo', { alvo: 'veiculo', placa });
+    await reply(ctx, `Qual o tipo de *${placa}*?\n${textoTiposVeiculo()}\n_0 = cancelar_`);
+    return;
+  }
+  await pedirConfirmacaoPreCadastro(ctx, { alvo: 'veiculo', placa, tipoVeiculo });
+}
+
+async function passoPreCadastro(ctx, sessao, texto) {
+  const d = sessao.dados || {};
+  if (sessao.passo === 'placa') {
+    const placa = normalizarPlaca(texto);
+    if (placa.length < 3 || !/[0-9]/.test(placa)) {
+      await reply(ctx, 'Envie a *placa* ou identificação interna (ex.: ABC1D23 ou TR-015).\n_0 = cancelar_');
+      return;
+    }
+    const existente = await ops.buscarPlacaFilial(ctx.filialId, placa);
+    if (existente) {
+      await clear(ctx);
+      await reply(ctx, `❌ Placa *${existente.placa}* já cadastrada nesta unidade.`);
+      return;
+    }
+    if (!d.tipoVeiculo) {
+      await setFluxo(ctx, 'pre_cadastro', 'tipo', { ...d, alvo: 'veiculo', placa });
+      await reply(ctx, `Qual o tipo de *${placa}*?\n${textoTiposVeiculo()}\n_0 = cancelar_`);
+      return;
+    }
+    await pedirConfirmacaoPreCadastro(ctx, { alvo: 'veiculo', placa, tipoVeiculo: d.tipoVeiculo });
+    return;
+  }
+  if (sessao.passo === 'tipo') {
+    const tipoVeiculo = resolverTipoVeiculoDigitado(texto);
+    if (!tipoVeiculo) {
+      await reply(ctx, `Tipo inválido. Escolha:\n${textoTiposVeiculo()}\n_0 = cancelar_`);
+      return;
+    }
+    await pedirConfirmacaoPreCadastro(ctx, { alvo: 'veiculo', placa: d.placa, tipoVeiculo });
+    return;
+  }
+  if (sessao.passo === 'fogo') {
+    const fogo = String(texto).replace(/^fogo\s+/i, '').trim();
+    if (!fogo || fogo.length < 3) {
+      await reply(ctx, 'Envie o *nº de fogo* (mín. 3 caracteres).\n_0 = cancelar_');
+      return;
+    }
+    await pedirConfirmacaoPreCadastro(ctx, { alvo: 'pneu', fogo });
+    return;
+  }
+  if (sessao.passo === 'confirma') {
+    const sn = simNao(texto);
+    if (sn === false) {
+      await clear(ctx);
+      await reply(ctx, 'Cancelado. Nada foi alterado.');
+      return;
+    }
+    if (sn !== true) {
+      await reply(ctx, '*1* confirma · *0* cancela');
+      return;
+    }
+    try {
+      if (d.alvo === 'pneu') await concluirPreCadastroPneu(ctx, d);
+      else await concluirPreCadastroVeiculo(ctx, d);
+    } catch (err) {
+      await clear(ctx);
+      await reply(ctx, `❌ ${err.message}`);
+    }
   }
 }
 
@@ -1178,6 +1382,8 @@ async function continuarSessao(ctx, sessao, texto) {
         return await passoMontarPos(ctx, sessao, texto);
       case 'cmd_natural':
         return await passoComandoNatural(ctx, sessao, texto);
+      case 'pre_cadastro':
+        return await passoPreCadastro(ctx, sessao, texto);
       default:
         await clear(ctx);
         await reply(ctx, textoMenu());
@@ -1203,9 +1409,10 @@ export async function processarMensagemMenu(ctx) {
     return { handled: true };
   }
 
-  if (comandoDuplicado(filialId, texto)) {
+  if (comandoDuplicado(ctx)) {
     console.info('[whatsapp-menu] duplicada ignorada', {
       filial: filialId,
+      id: ctx.mensagemId || null,
       texto: texto.slice(0, 40),
     });
     return { handled: true, duplicado: true };
@@ -1250,7 +1457,11 @@ export async function processarMensagemMenu(ctx) {
   const natural = parseComandoNatural(texto);
   if (natural) {
     try {
-      await resolverEIniciarComando(ctx, natural.tipo, natural.fogo, natural.fogo2);
+      if (natural.tipo === 'cadastrar_veiculo' || natural.tipo === 'cadastrar_pneu') {
+        await iniciarPreCadastro(ctx, natural);
+      } else {
+        await resolverEIniciarComando(ctx, natural.tipo, natural.fogo, natural.fogo2);
+      }
     } catch (err) {
       console.error('[whatsapp-menu] comando natural', err);
       await reply(ctx, `❌ ${err.message}`);

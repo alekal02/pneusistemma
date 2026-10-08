@@ -21,6 +21,32 @@ function erroOps(mensagem, status) {
   return Object.assign(new Error(mensagem), { status });
 }
 
+export const SQL_CADASTRO_COMPLETO = 'COALESCE(cadastro_completo, 1) = 1';
+
+export function cadastroEstaCompleto(row) {
+  return row != null && Number(row.cadastro_completo ?? 1) === 1;
+}
+
+function assertVeiculoOperacional(veiculo) {
+  if (!veiculo) throw erroOps('Veículo não encontrado', 404);
+  if (!cadastroEstaCompleto(veiculo)) {
+    throw erroOps(
+      'Veículo em pré-cadastro: conclua o cadastro no link web antes de operar',
+      400
+    );
+  }
+}
+
+function assertPneuOperacional(pneu) {
+  if (!pneu) throw erroOps('Pneu não encontrado', 404);
+  if (!cadastroEstaCompleto(pneu)) {
+    throw erroOps(
+      'Pneu em pré-cadastro: conclua o cadastro no link web antes de operar',
+      400
+    );
+  }
+}
+
 function falharTxSeTeste() {
   if (process.env.PNEU_TEST_FALHAR_TX === '1') {
     throw erroOps('falha simulada na transação', 500);
@@ -46,6 +72,7 @@ export async function validarSubstitutoEstoque({ filialId, pneuEstoqueId, veicul
   if (Number(estoque.ativo) !== 1) {
     throw erroOps('Pneu substituto indisponível (inativo)', 400);
   }
+  assertPneuOperacional(estoque);
   if (estoque.status_pneu !== 'estoque') {
     const motivo = estoque.status_pneu === 'montado'
       ? 'já está montado'
@@ -62,6 +89,7 @@ export async function validarSubstitutoEstoque({ filialId, pneuEstoqueId, veicul
   if (!veiculo) {
     throw erroOps('Veículo não encontrado', 404);
   }
+  assertVeiculoOperacional(veiculo);
   const pos = String(posicao || '').trim().toUpperCase();
   const layout = getLayout(veiculo.layout_pneus || LAYOUT_PADRAO);
   if (!layout.posicoes.includes(pos)) {
@@ -104,6 +132,7 @@ export async function buscarVeiculoPorPlaca(filialId, placaLimpa) {
     FROM veiculos v
     JOIN filiais f ON f.id = v.filial_id
     WHERE v.ativo = 1 AND v.filial_id = ?
+      AND ${SQL_CADASTRO_COMPLETO.replace('cadastro_completo', 'v.cadastro_completo')}
       AND REPLACE(REPLACE(UPPER(v.placa), '-', ''), ' ', '') LIKE ?
     ORDER BY v.placa
     LIMIT 15
@@ -122,6 +151,7 @@ export async function listarFrota(filialId) {
     SELECT id, placa, apelido, tipo, layout_pneus
     FROM veiculos
     WHERE ativo = 1 AND filial_id = ?
+      AND ${SQL_CADASTRO_COMPLETO}
     ORDER BY placa
   `).all(filialId);
   const out = [];
@@ -150,27 +180,50 @@ export async function listarFrota(filialId) {
   return out;
 }
 
+export async function buscarPlacaFilial(filialId, placaTexto) {
+  const db = getDb();
+  const placaLimpa = String(placaTexto || '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+  if (!placaLimpa) return null;
+  return db.prepare(`
+    SELECT v.*
+    FROM veiculos v
+    WHERE v.filial_id = ?
+      AND REPLACE(REPLACE(UPPER(v.placa), '-', ''), ' ', '') = ?
+    LIMIT 1
+  `).get(filialId, placaLimpa);
+}
+
 export async function criarVeiculo(filialId, {
   placa, apelido = null, tipo = 'Truck / Tração', km_atual = 0, layout_pneus = null,
+  marca = null, modelo = null, preCadastro = false,
 }) {
   const db = getDb();
-  const layoutId = layout_pneus || layoutPadraoPorTipo(tipo);
+  const layoutId = preCadastro ? null : (layout_pneus || layoutPadraoPorTipo(tipo));
   try {
     const result = await db.prepare(`
       INSERT INTO veiculos (
-        placa, apelido, tipo, km_atual, hr_atual, layout_pneus, filial_id, ativo
-      ) VALUES (?, ?, ?, ?, 0, ?, ?, 1)
+        placa, apelido, tipo, marca, modelo, km_atual, hr_atual, layout_pneus,
+        filial_id, ativo, cadastro_completo
+      ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, 1, ?)
     `).run(
       String(placa).trim().toUpperCase(),
       apelido?.trim() || null,
       normalizarTipoVeiculo(tipo) || 'Truck / Tração',
+      marca?.trim() || null,
+      modelo?.trim() || null,
       Number(km_atual) || 0,
       layoutId,
-      filialId
+      filialId,
+      preCadastro ? 0 : 1
     );
     const id = result.lastInsertRowid;
+    if (preCadastro) {
+      return { id, layoutId: null, total_posicoes: 0, preCadastro: true };
+    }
     const posicoes = await aplicarLayoutPneus(db, id, layoutId, null);
-    return { id, layoutId, total_posicoes: posicoes.length };
+    return { id, layoutId, total_posicoes: posicoes.length, preCadastro: false };
   } catch (err) {
     if (ehViolacaoUnique(err)) {
       const e = new Error('Placa já cadastrada');
@@ -181,12 +234,46 @@ export async function criarVeiculo(filialId, {
   }
 }
 
-export async function criarPneuEstoque(filialId, {
-  numero_fogo, marca = null, modelo, tipo_pneu = 'misto',
-  condicao = 'novo', sulco_inicial_mm = null,
+export async function completarVeiculo(filialId, veiculoId, {
+  marca, modelo, tipo, km_atual, layout_pneus, apelido, ano = null,
 }) {
   const db = getDb();
+  const veiculo = await db.prepare(`
+    SELECT * FROM veiculos WHERE id = ? AND filial_id = ?
+  `).get(veiculoId, filialId);
+  if (!veiculo) throw erroOps('Veículo não encontrado', 404);
   const modeloOk = String(modelo || '').trim();
+  const marcaOk = String(marca || '').trim();
+  const layoutId = layout_pneus || layoutPadraoPorTipo(tipo || veiculo.tipo);
+  if (!modeloOk) throw erroOps('Modelo é obrigatório para concluir o cadastro', 400);
+  if (!marcaOk) throw erroOps('Fabricante é obrigatório para concluir o cadastro', 400);
+  if (!layoutId) throw erroOps('Configuração dos eixos é obrigatória', 400);
+
+  await db.prepare(`
+    UPDATE veiculos SET
+      marca = ?, modelo = ?, tipo = COALESCE(?, tipo),
+      km_atual = COALESCE(?, km_atual), apelido = COALESCE(?, apelido),
+      ano = COALESCE(?, ano), cadastro_completo = 1, updated_at = NOW()
+    WHERE id = ?
+  `).run(
+    marcaOk,
+    modeloOk,
+    tipo ? (normalizarTipoVeiculo(tipo) || tipo) : null,
+    km_atual != null ? Number(km_atual) : null,
+    apelido != null ? (String(apelido).trim() || null) : null,
+    ano != null ? Number(ano) : null,
+    veiculoId
+  );
+  const posicoes = await aplicarLayoutPneus(db, veiculoId, layoutId, null);
+  return { id: veiculoId, layoutId, total_posicoes: posicoes.length, placa: veiculo.placa };
+}
+
+export async function criarPneuEstoque(filialId, {
+  numero_fogo, marca = null, modelo, tipo_pneu = 'misto',
+  condicao = 'novo', sulco_inicial_mm = null, preCadastro = false,
+}) {
+  const db = getDb();
+  const modeloOk = preCadastro ? (String(modelo || '').trim() || 'Pendente') : String(modelo || '').trim();
   if (!modeloOk) throw Object.assign(new Error('Modelo obrigatório'), { status: 400 });
   const tipo = TIPOS_PNEU.includes(tipo_pneu) ? tipo_pneu : 'misto';
   const cond = CONDICOES_PNEU.includes(condicao) ? condicao : 'novo';
@@ -196,8 +283,9 @@ export async function criarPneuEstoque(filialId, {
       db.prepare(`
       INSERT INTO pneus (
         veiculo_id, posicao, filial_id, marca, modelo, numero_fogo,
-        tipo_pneu, condicao, vida_recap, sulco_inicial_mm, status_pneu, ativo
-      ) VALUES (NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 'estoque', 1)
+        tipo_pneu, condicao, vida_recap, sulco_inicial_mm, status_pneu, ativo,
+        cadastro_completo
+      ) VALUES (NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 'estoque', 1, ?)
     `).run(
         filialId,
         marca?.trim() || null,
@@ -206,7 +294,8 @@ export async function criarPneuEstoque(filialId, {
         tipo,
         cond,
         vida,
-        sulco_inicial_mm != null ? Number(sulco_inicial_mm) : null
+        sulco_inicial_mm != null ? Number(sulco_inicial_mm) : null,
+        preCadastro ? 0 : 1
       )
     ));
     return db.prepare('SELECT * FROM pneus WHERE id = ?').get(result.lastInsertRowid);
@@ -219,12 +308,48 @@ export async function criarPneuEstoque(filialId, {
   }
 }
 
+export async function completarPneu(filialId, pneuId, {
+  marca, modelo, tipo_pneu, condicao, sulco_inicial_mm, numero_fogo = null,
+}) {
+  const db = getDb();
+  const pneu = await db.prepare(`
+    SELECT * FROM pneus WHERE id = ? AND filial_id = ? AND ativo = 1
+  `).get(pneuId, filialId);
+  if (!pneu) throw erroOps('Pneu não encontrado', 404);
+  const modeloOk = String(modelo || '').trim();
+  if (!modeloOk || /^pendente$/i.test(modeloOk)) {
+    throw erroOps('Modelo é obrigatório para concluir o cadastro', 400);
+  }
+  const tipo = TIPOS_PNEU.includes(tipo_pneu) ? tipo_pneu : (pneu.tipo_pneu || 'misto');
+  const cond = CONDICOES_PNEU.includes(condicao) ? condicao : (pneu.condicao || 'novo');
+  const vida = cond === 'recapado' ? Math.max(Number(pneu.vida_recap) || 0, 1) : (Number(pneu.vida_recap) || 0);
+  await db.prepare(`
+    UPDATE pneus SET
+      marca = ?, modelo = ?, tipo_pneu = ?, condicao = ?, vida_recap = ?,
+      sulco_inicial_mm = COALESCE(?, sulco_inicial_mm),
+      numero_fogo = COALESCE(?, numero_fogo),
+      cadastro_completo = 1
+    WHERE id = ?
+  `).run(
+    marca?.trim() || null,
+    modeloOk,
+    tipo,
+    cond,
+    vida,
+    sulco_inicial_mm != null && sulco_inicial_mm !== '' ? Number(sulco_inicial_mm) : null,
+    numero_fogo ? String(numero_fogo).trim() : null,
+    pneuId
+  );
+  return db.prepare('SELECT * FROM pneus WHERE id = ?').get(pneuId);
+}
+
 export async function listarEstoque(filialId, limit = 20) {
   const db = getDb();
   return db.prepare(`
     SELECT id, numero_fogo, marca, modelo, tipo_pneu, condicao
     FROM pneus
     WHERE filial_id = ? AND ativo = 1 AND status_pneu = 'estoque'
+      AND ${SQL_CADASTRO_COMPLETO}
     ORDER BY numero_fogo
     LIMIT ?
   `).all(filialId, limit);
@@ -313,10 +438,12 @@ export async function montarPneu({ filialId, pneuId, veiculoId, posicao }) {
   if (pneu.status_pneu === 'montado') {
     throw Object.assign(new Error('Pneu já está montado'), { status: 400 });
   }
+  assertPneuOperacional(pneu);
   const veiculo = await db.prepare(`
     SELECT * FROM veiculos WHERE id = ? AND filial_id = ? AND ativo = 1
   `).get(veiculoId, filialId);
   if (!veiculo) throw Object.assign(new Error('Veículo não encontrado'), { status: 404 });
+  assertVeiculoOperacional(veiculo);
 
   const layout = getLayout(veiculo.layout_pneus || LAYOUT_PADRAO);
   if (!layout.posicoes.includes(posicao)) {
@@ -654,6 +781,7 @@ export async function moverOuTrocarNaFrota({
   if (!veiculoDest) {
     throw Object.assign(new Error('Veículo de destino não encontrado'), { status: 404 });
   }
+  assertVeiculoOperacional(veiculoDest);
 
   const layoutDest = getLayout(veiculoDest.layout_pneus || LAYOUT_PADRAO);
   if (!layoutDest.posicoes.includes(posDest)) {
