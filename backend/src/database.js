@@ -6,6 +6,7 @@ import { config } from './config.js';
 import { createPool, db, closePool } from './pg-db.js';
 import { corrigirEncodingBanco } from './fix-encoding.js';
 import { backfillTipoCodigoVeiculos, seedEquipamentoTipos } from './equipamento-tipos.js';
+import { limparCacheColunas } from './schema-colunas.js';
 
 let ready = false;
 
@@ -165,7 +166,7 @@ CREATE TABLE IF NOT EXISTS configuracoes (
 
 CREATE TABLE IF NOT EXISTS notificacoes_whatsapp (
   id BIGSERIAL PRIMARY KEY,
-  tipo TEXT NOT NULL CHECK (tipo IN ('link_veiculo', 'alerta_critico', 'alerta_desgaste', 'relatorio_semanal')),
+  tipo TEXT NOT NULL CHECK (tipo IN ('alerta_critico', 'alerta_desgaste', 'alerta_posicao', 'link_veiculo', 'menu', 'relatorio_semanal')),
   destinatario_whatsapp TEXT NOT NULL,
   veiculo_id BIGINT REFERENCES veiculos(id),
   medicao_id BIGINT REFERENCES medicoes(id),
@@ -253,19 +254,46 @@ async function ensureColumn(table, column, ddl) {
   await db.exec(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${column} ${ddl}`);
 }
 
+/** Tipos gravados pelo código e já presentes em produção (incluindo menu). */
+export const TIPOS_NOTIFICACAO_WHATSAPP = [
+  'alerta_critico',
+  'alerta_desgaste',
+  'alerta_posicao',
+  'link_veiculo',
+  'menu',
+  'relatorio_semanal',
+];
+
+export function clausulaTiposNotificacao(extras = []) {
+  const tipos = [...new Set(
+    [...TIPOS_NOTIFICACAO_WHATSAPP, ...extras]
+      .map((t) => String(t || '').trim())
+      .filter((t) => /^[a-z0-9_]+$/i.test(t)),
+  )].sort();
+  return tipos.map((t) => `'${t}'`).join(', ');
+}
+
+/**
+ * Recria o check numa transação. Inclui os tipos já gravados.
+ * Se a troca falhar, o rollback devolve a constraint anterior. Nenhuma linha é apagada.
+ */
 async function ensureNotificacoesTipoRelatorio() {
-  try {
-    await db.exec(`
-      ALTER TABLE notificacoes_whatsapp DROP CONSTRAINT IF EXISTS notificacoes_whatsapp_tipo_check
-    `);
+  const rows = await db.prepare(`SELECT DISTINCT tipo FROM notificacoes_whatsapp`).all();
+  const existentes = rows.map((r) => String(r.tipo || '').trim()).filter(Boolean);
+  const invalidos = existentes.filter((t) => !/^[a-z0-9_]+$/i.test(t));
+  if (invalidos.length) {
+    console.warn('[database] constraint tipo notificacoes não alterada: tipo fora do padrão seguro');
+    return;
+  }
+  const lista = clausulaTiposNotificacao(existentes);
+  await db.transaction(async () => {
+    await db.exec(`ALTER TABLE notificacoes_whatsapp DROP CONSTRAINT IF EXISTS notificacoes_whatsapp_tipo_check`);
     await db.exec(`
       ALTER TABLE notificacoes_whatsapp
         ADD CONSTRAINT notificacoes_whatsapp_tipo_check
-        CHECK (tipo IN ('link_veiculo', 'alerta_critico', 'alerta_desgaste', 'relatorio_semanal'))
+        CHECK (tipo IN (${lista}))
     `);
-  } catch (err) {
-    console.warn('[database] constraint tipo notificacoes:', err.message);
-  }
+  });
 }
 
 async function seedConfigs() {
@@ -451,6 +479,7 @@ export async function initDatabase() {
   await ensureColumn('tokens_acesso_rapido', 'pneu_id', 'BIGINT');
   await ensureColumn('veiculos', 'cadastro_completo', 'INTEGER DEFAULT 1');
   await ensureColumn('pneus', 'cadastro_completo', 'INTEGER DEFAULT 1');
+  limparCacheColunas();
   try {
     await db.exec(`
       ALTER TABLE tokens_acesso_rapido ALTER COLUMN veiculo_id DROP NOT NULL
@@ -460,16 +489,6 @@ export async function initDatabase() {
     if (!/does not exist|already|não existe/i.test(err.message)) {
       console.warn('[migrate] tokens veiculo_id nullable:', err.message);
     }
-  }
-
-  // Permite tipos extras do menu WhatsApp (relatorio, menu, cadastros…)
-  try {
-    await db.exec(`
-      ALTER TABLE notificacoes_whatsapp
-        DROP CONSTRAINT IF EXISTS notificacoes_whatsapp_tipo_check
-    `);
-  } catch (err) {
-    console.warn('[migrate] notificacoes tipo check:', err.message);
   }
 
   await db.exec(`

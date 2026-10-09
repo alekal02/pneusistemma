@@ -169,13 +169,14 @@ function unidadeDoFiltro(filtro) {
   return [...uns][0] === 'horas' ? 'horas' : 'km';
 }
 
-function veiculoNoFiltro(veiculo, filtro) {
+export function veiculoNoFiltro(veiculo, filtro) {
   if (filtro?.texto) {
     const alvo = normFiltro(filtro.texto);
     const tipo = normFiltro(veiculo?.tipo);
     const codigo = normFiltro(veiculo?.tipo_codigo);
     return tipo === alvo || codigo === alvo;
   }
+  // Relatório geral: inclui tipo_codigo nulo (ex.: Truckado) sem regravar o cadastro.
   if (!filtro?.codigos?.length) return true;
   const codigo = veiculo.tipo_codigo || resolverTipoEquipamento(veiculo.tipo)?.codigo || '';
   return filtro.codigos.includes(codigo);

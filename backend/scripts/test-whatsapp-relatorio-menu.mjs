@@ -4,6 +4,7 @@
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import zlib from 'node:zlib';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EQUIPAMENTO_TIPOS } from '../src/equipamento-tipos.js';
@@ -12,6 +13,8 @@ import {
   resolverFiltroRelatorio,
   veiculoPassaFiltroRelatorio,
 } from '../src/services/relatorio-semanal-pdf.js';
+import { linhasTabelaFrota, veiculosComDiagrama } from '../src/services/relatorio-frota-visual-pdf.js';
+import { parseComandoNatural } from '../src/services/whatsapp-comandos.js';
 import {
   opcoesMenuRelatorio,
   textoMenu,
@@ -115,6 +118,13 @@ assert.match(relatorioSrc, /FROM veiculos[\s\S]*WHERE filial_id = \?/);
 assert.match(menuSrc, /gerarRelatorioSemanalPdfBuffer\(ctx\.filialId/);
 assert.equal(veiculoPassaFiltroRelatorio({ tipo: 'Caminhao Basculante', tipo_codigo: null }, 'Caminhao Basculante'), true);
 assert.equal(veiculoPassaFiltroRelatorio({ tipo: 'Truck / Tração', tipo_codigo: 'truck_tracao' }, 'Caminhao Basculante'), false);
+assert.equal(veiculoPassaFiltroRelatorio({ tipo: 'Truckado', tipo_codigo: null }, 'todos'), true);
+assert.equal(veiculoPassaFiltroRelatorio({ tipo: 'Truckado', tipo_codigo: null }, null), true);
+
+assert.equal(parseComandoNatural('manda o 0501-0042 para o estoque')?.tipo, 'estoque');
+assert.equal(parseComandoNatural('relatorio') , null);
+assert.match(menuSrc, /parseComandoNatural\(texto\)/);
+assert.match(menuSrc, /pedirTipoRelatorio/);
 
 assert.match(menuSrc, /gerarRelatorioSemanalPdfBuffer\(ctx\.filialId/);
 assert.match(menuSrc, /case 'medir':/);
@@ -141,6 +151,28 @@ for (const linha of [
 const filtroTruck = resolverFiltroRelatorio(tipoRelatorioDaResposta('2'));
 assert.equal(filtroTruck.id, 'caminhao_compactador');
 assert.equal(filtroTruck.label, 'Caminhao/Compactador');
+const pdfDadosFrota = [{
+  placa: 'TST1A23',
+  tipo: 'Truck / Tração',
+  tipo_codigo: 'truck_tracao',
+  status_sulco: 'ok',
+  status_label: 'OK',
+  menor_sulco: 10,
+  pneus: [{
+    posicao: '1E',
+    menor_sulco: 10,
+    status_sulco: 'ok',
+    status_label: 'OK',
+    diagnostico: 'OK',
+    acao: 'OK',
+    motivo: 'Desgaste uniforme.',
+  }],
+}, {
+  placa: 'TRK0001',
+  tipo: 'Truckado',
+  tipo_codigo: null,
+  pneus: [],
+}];
 const pdf = await gerarPdfRelatorioSemanal({
   titulo: `Relatorio semanal - ${filtroTruck.label}`,
   filtro_tipo: filtroTruck.id,
@@ -163,23 +195,7 @@ const pdf = await gerarPdfRelatorioSemanal({
     sem_medicao: 0,
     movimentacoes_semana: 0,
   },
-  frota: [{
-    placa: 'TST1A23',
-    tipo: 'Truck / Tração',
-    tipo_codigo: 'truck_tracao',
-    status_sulco: 'ok',
-    status_label: 'OK',
-    menor_sulco: 10,
-    pneus: [{
-      posicao: '1E',
-      menor_sulco: 10,
-      status_sulco: 'ok',
-      status_label: 'OK',
-      diagnostico: 'OK',
-      acao: 'OK',
-      motivo: 'Desgaste uniforme.',
-    }],
-  }],
+  frota: pdfDadosFrota,
   prioridades: { troca: [], monitorar: [], rodizio: [] },
   diagnosticos: [],
   medicoes_semana_lista: [],
@@ -192,5 +208,39 @@ const pdf = await gerarPdfRelatorioSemanal({
 assert.ok(Buffer.isBuffer(pdf));
 assert.ok(pdf.length > 500);
 assert.equal(pdf.subarray(0, 4).toString(), '%PDF');
+const placasTabela = linhasTabelaFrota(pdfDadosFrota).map((l) => l.placa);
+assert.deepEqual(placasTabela, ['TST1A23', 'TRK0001']);
+assert.equal(linhasTabelaFrota(pdfDadosFrota).find((l) => l.placa === 'TRK0001').status, 'Sem pneu montado');
+assert.deepEqual(veiculosComDiagrama(pdfDadosFrota).map((v) => v.placa), ['TST1A23']);
+function textoDoConteudoPdf(conteudo) {
+  return conteudo.replace(/<([0-9A-Fa-f]+)>/g, (_, hex) => {
+    let s = '';
+    for (let i = 0; i + 1 < hex.length; i += 2) {
+      s += String.fromCharCode(parseInt(hex.slice(i, i + 2), 16));
+    }
+    return s;
+  });
+}
+
+function pdfContem(buf, texto) {
+  const raw = buf.toString('latin1');
+  if (raw.includes(texto)) return true;
+  const re = /stream\r?\n([\s\S]*?)endstream/g;
+  for (const m of raw.matchAll(re)) {
+    let corpo = m[1];
+    if (corpo.endsWith('\r\n')) corpo = corpo.slice(0, -2);
+    else if (corpo.endsWith('\n') || corpo.endsWith('\r')) corpo = corpo.slice(0, -1);
+    try {
+      const textoStream = textoDoConteudoPdf(zlib.inflateSync(Buffer.from(corpo, 'latin1')).toString('latin1'));
+      if (textoStream.includes(texto)) return true;
+    } catch {
+      /* trecho que não é stream compactado */
+    }
+  }
+  return false;
+}
+assert.ok(pdfContem(pdf, 'TRK0001'), 'PDF sem a placa do veiculo sem pneu montado');
+assert.ok(pdfContem(pdf, 'TST1A23'));
+assert.ok(pdfContem(pdf, 'Sem pneu montado'));
 
 console.log('menu relatorio whatsapp ok');

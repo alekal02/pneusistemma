@@ -706,7 +706,7 @@ function desenharPaginaResumo(doc, dados) {
   txt(doc, `Recapagem: ${nRecap}   ·   Descarte: ${nDesc}   ·   Movimentos na semana: ${nMov}`, margin, y, { width: W - 2 * margin });
   y += 18;
   doc.fillColor(C.mudo).font('Helvetica').fontSize(8);
-  txt(doc, 'Proxima pagina: frota visual. Depois, so pneus que pedem acao (critico e atencao).', margin, y, { width: W - 2 * margin });
+  txt(doc, 'Proxima pagina: tabela da frota cadastrada, inclusive sem pneu montado. Depois, o diagrama de quem tem pneu.', margin, y, { width: W - 2 * margin });
 
   doc.fillColor(C.mudo).font('Helvetica').fontSize(7);
   txt(doc, 'Pneusistemma  ·  resumo', W - margin - 120, H - 12, { width: 120, align: 'right' });
@@ -722,12 +722,55 @@ function itensRelevantes(lista, limite = 8) {
     .slice(0, limite);
 }
 
+/** Diagrama só quando há pneu montado para desenhar. A tabela lista a frota inteira. */
+export function veiculosComDiagrama(frota) {
+  return (frota || []).filter((v) => (v.pneus || []).length > 0);
+}
+
+export function linhasTabelaFrota(frota) {
+  return (frota || []).map((v) => {
+    const n = (v.pneus || []).length;
+    return {
+      placa: v.placa || '-',
+      apelido: v.apelido || '-',
+      tipo: v.tipo || '-',
+      pneus: String(n),
+      sulco: v.menor_sulco != null ? `${v.menor_sulco} mm` : '-',
+      status: n ? (v.status_label || '-') : 'Sem pneu montado',
+    };
+  });
+}
+
+function desenharTabelaFrota(doc, dados) {
+  const frota = dados.frota || [];
+  const sub = `${dados.filtro_label || 'Todos'}  ·  ${frota.length} veiculo(s), inclusive sem pneu montado`;
+  novaPagina(doc);
+  const y = abrirPagina(doc, 'Frota cadastrada', sub);
+  desenharTabela(doc, {
+    pageTitle: 'Frota cadastrada',
+    pageSub: sub,
+    y,
+    section: `Frota cadastrada (${frota.length})`,
+    empty: 'Nenhum veiculo nesta selecao.',
+    columns: [
+      { key: 'placa', label: 'Placa', w: 0.16, bold: true },
+      { key: 'apelido', label: 'Apelido', w: 0.18 },
+      { key: 'tipo', label: 'Tipo', w: 0.24 },
+      { key: 'pneus', label: 'Montados', w: 0.12 },
+      { key: 'sulco', label: 'Menor sulco', w: 0.14 },
+      { key: 'status', label: 'Status', w: 0.16 },
+    ],
+    rows: linhasTabelaFrota(frota),
+  });
+}
+
 export function desenharRelatorioVisual(doc, dados) {
-  const veiculos = (dados.frota || []).filter((v) => v.pneus?.length);
+  const veiculos = veiculosComDiagrama(dados.frota);
   const grupos = chunk(veiculos, 6);
   const totalFrota = Math.max(grupos.length, 1);
 
   desenharPaginaResumo(doc, dados);
+  desenharTabelaFrota(doc, dados);
 
   if (!grupos.length) {
     novaPagina(doc);

@@ -13,6 +13,7 @@ import {
 import { excluirFilialCompleta, excluirVeiculoCompleto } from '../services/limpar-filial.js';
 import { classificarSulco, getLimites, limitesDoVeiculo, menorSulco } from '../limites.js';
 import { SQL_LATERAL_ULTIMA_MEDICAO, SQL_LOGS_MEDICAO_FILIAL } from '../sql-ultima-medicao.js';
+import { filtroCadastroCompleto } from '../schema-colunas.js';
 import { percentualVida } from '../diagnostico.js';
 import { especificacaoMedicao, prepararMedicao } from '../medicao-perfil.js';
 import {
@@ -52,9 +53,12 @@ function assertFilialNoEscopo(req, filialId) {
 }
 
 async function resumoFilial(db, filialId, _limites, tipoFiltro = null) {
+  const cadVeiculo = await filtroCadastroCompleto(db, 'veiculos');
+  const cadVeiculoAlias = await filtroCadastroCompleto(db, 'veiculos', 'v.cadastro_completo');
+  const cadPneu = await filtroCadastroCompleto(db, 'pneus');
   const veiculosRows = await db.prepare(`
     SELECT id, tipo, layout_pneus, km_atual, hr_atual
-    FROM veiculos WHERE filial_id = ? AND ativo = 1 AND COALESCE(cadastro_completo, 1) = 1
+    FROM veiculos WHERE filial_id = ? AND ativo = 1 AND ${cadVeiculo}
   `).all(filialId);
   const veiculosLista = veiculosRows.filter((v) => veiculoCombinaTipo(v.tipo, tipoFiltro));
   const veiculos = veiculosLista.length;
@@ -63,7 +67,7 @@ async function resumoFilial(db, filialId, _limites, tipoFiltro = null) {
     SELECT
       COUNT(*) FILTER (WHERE ativo = 1 AND status_pneu = 'recapagem') as em_recapagem,
       COUNT(*) FILTER (WHERE status_pneu = 'descarte') as em_descarte,
-      COUNT(*) FILTER (WHERE ativo = 1 AND status_pneu = 'estoque' AND COALESCE(cadastro_completo, 1) = 1) as em_estoque
+      COUNT(*) FILTER (WHERE ativo = 1 AND status_pneu = 'estoque' AND ${cadPneu}) as em_estoque
     FROM pneus
     WHERE filial_id = ?
   `).get(filialId);
@@ -79,7 +83,7 @@ async function resumoFilial(db, filialId, _limites, tipoFiltro = null) {
       um.inspecao_danos, um.data_medicao
     FROM pneus p
     JOIN veiculos v ON v.id = p.veiculo_id AND v.ativo = 1 AND v.filial_id = ?
-      AND COALESCE(v.cadastro_completo, 1) = 1
+      AND ${cadVeiculoAlias}
     ${SQL_LATERAL_ULTIMA_MEDICAO}
     WHERE p.ativo = 1 AND p.status_pneu = 'montado'
   `).all(filialId);
@@ -199,6 +203,7 @@ async function listarEmRecapagem(db, filialId) {
 
 /** Lista pneus com ação pendente (troca/recap/monitorar) — base para compras */
 async function pendenciasFilial(db, filialId, _limites, tipoFiltro = null) {
+  const cadVeiculoAlias = await filtroCadastroCompleto(db, 'veiculos', 'v.cadastro_completo');
   const rows = await db.prepare(`
     SELECT
       p.id as pneu_id, p.posicao, p.numero_fogo, p.marca as pneu_marca,
@@ -208,7 +213,7 @@ async function pendenciasFilial(db, filialId, _limites, tipoFiltro = null) {
       um.inspecao_danos, um.data_medicao, um.diagnostico, um.km_veiculo
     FROM pneus p
     JOIN veiculos v ON v.id = p.veiculo_id AND v.ativo = 1 AND v.filial_id = ?
-      AND COALESCE(v.cadastro_completo, 1) = 1
+      AND ${cadVeiculoAlias}
     ${SQL_LATERAL_ULTIMA_MEDICAO}
     WHERE p.ativo = 1 AND p.status_pneu = 'montado'
   `).all(filialId);

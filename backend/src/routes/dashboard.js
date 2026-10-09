@@ -4,6 +4,7 @@ import { classificarSulco, getLimites, limitesDoVeiculo, menorSulco } from '../l
 import { requireAuth, requireFilial, filialScopeId } from '../auth.js';
 import { normalizarDiaMedicao, labelDiaMedicao, semanaMedicaoBrasil } from '../dia-medicao.js';
 import { SQL_LATERAL_ULTIMA_MEDICAO, SQL_LOGS_MEDICAO_FILIAL } from '../sql-ultima-medicao.js';
+import { filtroCadastroCompleto } from '../schema-colunas.js';
 import { normalizarTipoVeiculo } from '../fix-encoding.js';
 import {
   acumularAlerta,
@@ -103,7 +104,7 @@ router.get('/resumo', async (req, res, next) => {
           um.inspecao_danos, um.data_medicao, um.created_at as medicao_created
         FROM pneus p
         JOIN veiculos v ON v.id = p.veiculo_id AND v.ativo = 1 AND v.filial_id = ?
-          AND COALESCE(v.cadastro_completo, 1) = 1
+          AND ${await filtroCadastroCompleto(db, 'veiculos', 'v.cadastro_completo')}
         ${SQL_LATERAL_ULTIMA_MEDICAO}
         WHERE p.ativo = 1 AND p.status_pneu = 'montado'
       `).all(filialId),
